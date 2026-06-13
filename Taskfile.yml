@@ -1,0 +1,62 @@
+# https://taskfile.dev
+#
+# This is a multi-module workspace, so `go test ./...` from the root does not
+# work. These tasks discover every module (each directory with a go.mod) and run
+# the command in each one. New tool modules are picked up automatically.
+#
+#   task            # run tests in every module
+#   task check      # vet + lint + test across every module
+#   task lint
+#   task tidy
+
+version: '3'
+
+vars:
+  # Space-separated list of module directories (e.g. "./otx ./vt ./internal ...").
+  MODULES:
+    sh: find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort | tr '\n' ' '
+
+env:
+  # Test each module through its own go.mod (and replace directive), the same way
+  # an external consumer would, rather than via the workspace.
+  GOWORK: off
+
+tasks:
+  default:
+    deps: [test]
+
+  test:
+    desc: Run `go test` in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: go -C {{.ITEM}} test -race ./...
+
+  vet:
+    desc: Run `go vet` in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: go -C {{.ITEM}} vet ./...
+
+  lint:
+    desc: Run golangci-lint in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && golangci-lint run --timeout 10m ./...
+
+  tidy:
+    desc: Run `go mod tidy` in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: go -C {{.ITEM}} mod tidy
+
+  fmt:
+    desc: Format all Go code
+    cmds:
+      - gofmt -w .
+
+  check:
+    desc: Run vet, lint and test across every module
+    cmds:
+      - task: vet
+      - task: lint
+      - task: test

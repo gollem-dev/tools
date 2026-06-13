@@ -1,0 +1,34 @@
+name: gosec
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  # gosec runs as a Docker action that always executes from the repository root
+  # (it ignores per-step working-directory). A single root scan with `./...`
+  # already covers every module in the workspace via the committed go.work.
+  gosec:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    env:
+      GO111MODULE: on
+    steps:
+      - name: cicd-sensor
+        uses: cicd-sensor/cicd-sensor-action@6ee257338e68af2b279b321b3346fe5f385aa498 # v0.0.29
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@5e5517beec77b8228ba43ec8d7cc22d82ed31924 # v2.25.0
+        with:
+          # -no-fail lets the SARIF report drive findings via the Security tab.
+          args: "-no-fail -fmt sarif -out results.sarif ./..."
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@7fc1baf373eb073c686865bd453d412d506a05a2 # v3.35.1
+        with:
+          sarif_file: results.sarif
+          category: gosec

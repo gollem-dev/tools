@@ -20,12 +20,24 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace file
-go.work
+# Go workspace file: go.work IS committed (multi-module monorepo); the
+# generated checksum file is not.
 go.work.sum
 
 # env file
 .env
+.env.hcl
+.env.*.hcl
+!.env.example.hcl
+
+# local environment reference (contains personal/project-specific values)
+env.ref.yaml
+
+# spec-driven development working docs (not part of the published repo)
+.spec/
+
+# Security scanner artifacts produced in CI
+*.sarif
 
 # Editor/IDE
 # .idea/
