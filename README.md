@@ -24,29 +24,44 @@ own Go module, so you only pull the dependencies of the tools you actually use.
 ## Usage
 
 Every tool is constructed with `New` and the functional-option pattern, and returns
-a concrete `*ToolSet` that satisfies `gollem.ToolSet`:
+a concrete `*ToolSet` that satisfies `gollem.ToolSet`. Register it with a gollem
+agent via `gollem.WithToolSets`, then `Execute`:
 
 ```go
 import (
 	"context"
 
 	"github.com/gollem-dev/gollem"
+	"github.com/gollem-dev/gollem/llm/claude"
 	"github.com/gollem-dev/tools/otx"
 )
 
-func setup(ctx context.Context) (gollem.ToolSet, error) {
-	ts, err := otx.New("...")
+func run(ctx context.Context) error {
+	// Construct the tool. New only validates locally; it performs no network I/O.
+	ts, err := otx.New("<OTX_API_KEY>")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Optional: verify connectivity / credentials before use.
 	if err := ts.Ping(ctx); err != nil {
-		return nil, err
+		return err
 	}
-	return ts, nil
+
+	// Wire the tool into a gollem agent backed by your LLM of choice.
+	llm, err := claude.New(ctx, "<ANTHROPIC_API_KEY>")
+	if err != nil {
+		return err
+	}
+	agent := gollem.New(llm, gollem.WithToolSets(ts))
+
+	// The agent can now call the otx_* tools while answering.
+	_, err = agent.Execute(ctx, gollem.Text("Is 8.8.8.8 malicious?"))
+	return err
 }
 ```
+
+Pass several tools at once with `gollem.WithToolSets(otxTS, vtTS, whoisTS)`.
 
 Common conventions across every tool:
 

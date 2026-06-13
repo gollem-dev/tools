@@ -54,6 +54,8 @@ runs:
           fi
         fi
 
-        modules=$(printf '%s\n' $selected | grep -v '^$' | sort -u | jq -R . | jq -cs .)
+        # sed (not `grep -v`) drops blank lines: grep exits 1 on no match, which
+        # under `pipefail` would fail the job for a docs-only push (empty selection).
+        modules=$(printf '%s\n' $selected | sed '/^$/d' | sort -u | jq -R . | jq -cs .)
         echo "modules=$modules" >> "$GITHUB_OUTPUT"
         echo "Affected modules: $modules"
