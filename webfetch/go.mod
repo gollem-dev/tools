@@ -4,7 +4,6 @@ go 1.26.4
 
 require (
 	github.com/gollem-dev/gollem v0.26.0
-	github.com/gollem-dev/tools/internal v0.0.0
 	github.com/m-mizutani/goerr/v2 v2.0.1
 	github.com/m-mizutani/gt v0.2.1
 	golang.org/x/net v0.53.0
@@ -40,7 +39,3 @@ require (
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-// Dev-time local resolution of the shared internal module. Replace with a real
-// version (tag internal/vX) before publishing.
-replace github.com/gollem-dev/tools/internal => ../internal

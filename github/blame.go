@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -143,7 +142,7 @@ func (t *ToolSet) runGetBlame(ctx context.Context, args map[string]any) (map[str
 			goerr.V("repo", repo),
 			goerr.V("path", path))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

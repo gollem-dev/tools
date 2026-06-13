@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -226,7 +225,7 @@ func (t *ToolSet) fetch(ctx context.Context, rawURL string) (status int, content
 	if err != nil {
 		return 0, "", nil, goerr.Wrap(err, "failed to fetch url", goerr.V("url", rawURL))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	limited := io.LimitReader(resp.Body, t.maxContentBytes)
 	b, err := io.ReadAll(limited)

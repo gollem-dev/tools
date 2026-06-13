@@ -14,7 +14,3 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 )
-
-// Dev-time local resolution of the shared internal module. Replace with a real
-// version (tag internal/vX) before publishing.
-replace github.com/gollem-dev/tools/internal => ../internal

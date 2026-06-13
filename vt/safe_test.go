@@ -1,4 +1,4 @@
-package safe_test
+package vt_test
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/gollem-dev/tools/internal/safe"
+	"github.com/gollem-dev/tools/vt"
 	"github.com/m-mizutani/gt"
 )
 
@@ -20,33 +20,33 @@ func (c *stubCloser) Close() error {
 	return c.err
 }
 
-func TestCloseNilCloser(t *testing.T) {
+func TestSafeCloseNilCloser(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	// A nil io.Closer must be a no-op and must not panic.
-	safe.Close(logger, nil)
+	vt.SafeClose(logger, nil)
 
 	gt.String(t, buf.String()).Equal("")
 }
 
-func TestCloseSuccess(t *testing.T) {
+func TestSafeCloseSuccess(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	c := &stubCloser{err: nil}
-	safe.Close(logger, c)
+	vt.SafeClose(logger, c)
 
 	gt.Bool(t, c.called).True()
 	gt.String(t, buf.String()).Equal("")
 }
 
-func TestCloseError(t *testing.T) {
+func TestSafeCloseError(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	c := &stubCloser{err: errors.New("boom")}
-	safe.Close(logger, c)
+	vt.SafeClose(logger, c)
 
 	gt.Bool(t, c.called).True()
 	gt.String(t, buf.String()).
@@ -54,10 +54,10 @@ func TestCloseError(t *testing.T) {
 		Contains("boom")
 }
 
-func TestCloseNilLoggerDoesNotPanic(t *testing.T) {
+func TestSafeCloseNilLoggerDoesNotPanic(t *testing.T) {
 	// A nil logger must fall back to the default logger without panicking.
 	c := &stubCloser{err: errors.New("boom")}
-	safe.Close(nil, c)
+	vt.SafeClose(nil, c)
 
 	gt.Bool(t, c.called).True()
 }

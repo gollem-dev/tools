@@ -79,5 +79,5 @@ A single module: `go -C otx test ./...` (or `zenv go -C otx test ./...` for live
 
 This is a multi-module workspace (`go.work`); `go test ./...` from the repo root does
 not work because the root is not a module. Use `task` (see above) to run across all
-modules, or `go -C <module> test ./...` for one. Shared helpers live in the `internal`
-module.
+modules, or `go -C <module> test ./...` for one. Each module is fully
+self-contained — there is no shared helper module.

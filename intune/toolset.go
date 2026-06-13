@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -327,7 +326,7 @@ func (t *ToolSet) doGraphRequest(ctx context.Context, endpoint string) ([]byte, 
 	if err != nil {
 		return nil, 0, goerr.Wrap(err, "failed to send Graph request", goerr.V("endpoint", endpoint))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -373,7 +372,7 @@ func (t *ToolSet) fetchToken(ctx context.Context) (string, error) {
 		return "", goerr.Wrap(err, "failed to send token request",
 			goerr.V("token_endpoint", t.tokenEndpoint))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

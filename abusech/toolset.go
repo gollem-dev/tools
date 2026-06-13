@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -146,7 +145,7 @@ func (t *ToolSet) query(ctx context.Context, hash string) (map[string]any, error
 	if err != nil {
 		return nil, eb.Wrap(err, "failed to send request")
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

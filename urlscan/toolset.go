@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -160,7 +159,7 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 	if err != nil {
 		return goerr.Wrap(err, "urlscan ping: request failed")
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	if resp.StatusCode >= http.StatusInternalServerError {
 		return goerr.New("urlscan ping: server error", goerr.V("status", resp.StatusCode))
@@ -198,7 +197,7 @@ func (t *ToolSet) scan(ctx context.Context, targetURL string) (map[string]any, e
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to send scan request", goerr.V("url", targetURL))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	eb := goerr.NewBuilder(goerr.V("status", resp.StatusCode), goerr.V("url", targetURL))
 
@@ -250,7 +249,7 @@ func (t *ToolSet) scan(ctx context.Context, targetURL string) (map[string]any, e
 		}
 
 		if pollResp.StatusCode == http.StatusNotFound {
-			safe.Close(t.logger, pollResp.Body)
+			safeClose(t.logger, pollResp.Body)
 			t.logger.Debug("urlscan result not yet available, retrying",
 				slog.String("uuid", submitted.UUID),
 				slog.Duration("backoff", t.backoff),
@@ -260,7 +259,7 @@ func (t *ToolSet) scan(ctx context.Context, targetURL string) (map[string]any, e
 
 		if pollResp.StatusCode != http.StatusOK {
 			rawBody, _ := io.ReadAll(pollResp.Body)
-			safe.Close(t.logger, pollResp.Body)
+			safeClose(t.logger, pollResp.Body)
 			return nil, goerr.New("failed to get urlscan result",
 				goerr.V("status", pollResp.StatusCode),
 				goerr.V("body", string(rawBody)),
@@ -269,7 +268,7 @@ func (t *ToolSet) scan(ctx context.Context, targetURL string) (map[string]any, e
 		}
 
 		rawBody, err := io.ReadAll(pollResp.Body)
-		safe.Close(t.logger, pollResp.Body)
+		safeClose(t.logger, pollResp.Body)
 		if err != nil {
 			return nil, goerr.Wrap(err, "failed to read urlscan result body", goerr.V("uuid", submitted.UUID))
 		}

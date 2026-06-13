@@ -2,6 +2,9 @@ package slack
 
 import "time"
 
+// SafeClose exposes the package-internal safeClose helper for unit testing.
+var SafeClose = safeClose
+
 // WithRetryWaitForTest overrides the base retry backoff so rate-limit retry
 // tests run without real delays. Test-only.
 func WithRetryWaitForTest(d time.Duration) Option {

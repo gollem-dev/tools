@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -185,7 +184,7 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 	if err != nil {
 		return goerr.Wrap(err, "failed to send auth.test request", goerr.V("url", endpoint))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -320,7 +319,7 @@ func (t *ToolSet) searchOnce(ctx context.Context, endpoint string) (result *sear
 		// Treat transport errors as retryable.
 		return nil, 0, true, goerr.Wrap(err, "failed to send search request", goerr.V("url", endpoint))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	eb := goerr.NewBuilder(goerr.V("status", resp.StatusCode), goerr.V("url", endpoint))
 
