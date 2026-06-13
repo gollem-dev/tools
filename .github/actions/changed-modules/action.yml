@@ -40,10 +40,9 @@ runs:
           selected="$all"
         else
           changed=$(git diff --name-only "$base" HEAD)
-          # A shared change invalidates every module: all modules require the
-          # internal module via a replace, and go.work / lint config / CI affect
-          # everything.
-          if printf '%s\n' "$changed" | grep -qE '^(go\.work|\.golangci\.yml|\.github/|internal/)'; then
+          # A shared change invalidates every module: go.work / lint config / CI
+          # affect everything.
+          if printf '%s\n' "$changed" | grep -qE '^(go\.work|\.golangci\.yml|\.github/)'; then
             selected="$all"
           else
             selected=""

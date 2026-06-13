@@ -13,7 +13,6 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/dustin/go-humanize"
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
@@ -188,7 +187,7 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 	if err != nil {
 		return goerr.Wrap(err, "BigQuery ping: failed to create client")
 	}
-	defer safe.Close(t.logger, client)
+	defer safeClose(t.logger, client)
 
 	// For the real default client, call Datasets to exercise credentials.
 	if dc, ok := client.(*defaultBigQueryClient); ok {
@@ -202,7 +201,7 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 		if err != nil {
 			return goerr.Wrap(err, "BigQuery ping: failed to create GCS client")
 		}
-		safe.Close(t.logger, storageClient)
+		safeClose(t.logger, storageClient)
 	}
 
 	return nil
@@ -341,7 +340,7 @@ func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (ma
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to create BigQuery client")
 	}
-	defer safe.Close(t.logger, client)
+	defer safeClose(t.logger, client)
 
 	return t.runWithClient(ctx, name, args, client)
 }

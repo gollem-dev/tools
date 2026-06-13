@@ -11,7 +11,6 @@ import (
 	"net/url"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -147,7 +146,7 @@ func (t *ToolSet) query(ctx context.Context, indicatorType, indicator string) (m
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to send request", goerr.V("url", endpoint))
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	eb := goerr.NewBuilder(goerr.V("status", resp.StatusCode), goerr.V("url", endpoint))
 

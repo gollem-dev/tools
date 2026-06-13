@@ -4,7 +4,6 @@ use (
 	./abusech
 	./bigquery
 	./github
-	./internal
 	./intune
 	./ipdb
 	./otx

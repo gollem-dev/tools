@@ -1,19 +1,17 @@
-// Package safe provides small helpers for safe resource handling that are
-// shared across tool packages.
-package safe
+package ipdb
 
 import (
 	"io"
 	"log/slog"
 )
 
-// Close closes c, logging any error via logger instead of panicking.
+// safeClose closes c, logging any error via logger instead of panicking.
 //
 // It is nil-safe for both the closer and the logger: a nil closer is a no-op,
 // and a nil logger falls back to slog.Default(). This exists so call sites never
 // need to write `_ = c.Close()` (which silently drops errors) or a bare
 // `c.Close()` (which panics on a nil receiver).
-func Close(logger *slog.Logger, c io.Closer) {
+func safeClose(logger *slog.Logger, c io.Closer) {
 	if c == nil {
 		return
 	}

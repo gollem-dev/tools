@@ -9,7 +9,6 @@ import (
 	"log/slog"
 
 	"cloud.google.com/go/storage"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -37,7 +36,7 @@ func (b *gcsStorageBackend) WriteObject(ctx context.Context, bucket, object stri
 	if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
 		// The copy error is primary; close to release the writer and log any
 		// secondary close error rather than masking the real failure.
-		safe.Close(b.logger, w)
+		safeClose(b.logger, w)
 		return goerr.Wrap(err, "failed to write GCS object",
 			goerr.V("bucket", bucket), goerr.V("object", object))
 	}

@@ -12,7 +12,7 @@
 version: '3'
 
 vars:
-  # Space-separated list of module directories (e.g. "./otx ./vt ./internal ...").
+  # Space-separated list of module directories (e.g. "./otx ./vt ./bigquery ...").
   MODULES:
     sh: find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort | tr '\n' ' '
 

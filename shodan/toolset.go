@@ -12,7 +12,6 @@ import (
 	"net/url"
 
 	"github.com/gollem-dev/gollem"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/m-mizutani/goerr/v2"
 )
 
@@ -183,7 +182,7 @@ func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (ma
 	if err != nil {
 		return nil, eb.Wrap(err, "failed to send request")
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -226,7 +225,7 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 	if err != nil {
 		return goerr.Wrap(err, "Shodan ping failed")
 	}
-	defer safe.Close(t.logger, resp.Body)
+	defer safeClose(t.logger, resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// SafeClose exposes the package-internal safeClose helper for unit testing.
+var SafeClose = safeClose
+
 // WithClientFactoryForTest injects a custom bigQueryClientFactory into the
 // ToolSet. It is intentionally unexported outside this package and only
 // accessible via the export_test.go file so that production code cannot reach

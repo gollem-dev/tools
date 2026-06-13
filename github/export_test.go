@@ -1,5 +1,8 @@
 package github
 
+// SafeClose exposes the package-internal safeClose helper for unit testing.
+var SafeClose = safeClose
+
 // WithClientForTest injects a fake ghClient for unit testing without touching
 // the network. This file is compiled only during tests.
 func WithClientForTest(c ghClient) Option {

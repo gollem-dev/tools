@@ -9,7 +9,6 @@ import (
 	"log/slog"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/gollem-dev/tools/internal/safe"
 	"github.com/google/uuid"
 	"github.com/m-mizutani/goerr/v2"
 	"google.golang.org/api/iterator"
@@ -26,7 +25,7 @@ func (t *ToolSet) storageFor(ctx context.Context) (storageBackend, func(), error
 		return nil, nil, goerr.Wrap(err, "failed to create GCS storage client")
 	}
 	backend := &gcsStorageBackend{client: client, logger: t.logger}
-	cleanup := func() { safe.Close(t.logger, client) }
+	cleanup := func() { safeClose(t.logger, client) }
 	return backend, cleanup, nil
 }
 
@@ -446,7 +445,7 @@ func (t *ToolSet) getTableSchema(ctx context.Context, projectID, datasetID, tabl
 		return nil, goerr.Wrap(err, "failed to create BigQuery client for schema fetch",
 			goerr.V("project_id", projectID))
 	}
-	defer safe.Close(t.logger, client)
+	defer safeClose(t.logger, client)
 
 	metadata, err := client.Dataset(datasetID).Table(tableID).Metadata(ctx)
 	if err != nil {
