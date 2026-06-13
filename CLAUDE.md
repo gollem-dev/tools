@@ -115,3 +115,34 @@ Workflows live in `.github/workflows/`, adapted for the multi-module layout:
 description each.** Whenever a tool is added, removed, or its purpose changes,
 update the tool list in `README.md` in the same change. Treat this as part of the
 implementation, not an afterthought.
+
+## Versioning & tags
+
+Because every tool is its own Go module, **versions are per-module and fully
+independent**. There is intentionally NO repository-wide version tag — a single
+`vX.Y.Z` at the repo root does not resolve sub-module imports
+(`go get github.com/gollem-dev/tools/otx@vX.Y.Z` needs an `otx/vX.Y.Z` tag) and
+only creates noise. Module versions are NOT kept in lockstep: a frequently
+changed module (`otx/v0.9.0`) and a rarely touched one (`whois/v0.1.0`) diverging
+is expected and correct, not a problem to "fix". A module's version is a contract
+identifier for that module alone, not a rank to align with its neighbours.
+
+- **Tag format**: `<module>/vX.Y.Z` (e.g. `otx/v0.2.0`). This is the only tag
+  form Go's module resolution accepts for a sub-directory module. Never create a
+  bare repo-root `vX.Y.Z` tag.
+- **When to tag**: tag a module ONLY when it has real changes since its own last
+  tag. Do NOT bump a module that did not change just to keep numbers aligned with
+  others — an empty version tag forces consumers to diff for a non-existent change
+  (a "boy who cried wolf" tag) and is prohibited.
+- **What to bump** (SemVer per module, judged against that module's last tag):
+  `patch` for fixes, `minor` for backward-compatible additions, `major` for
+  breaking API changes.
+- **How to release** (no Taskfile target — it is a one-liner; tag at the commit
+  to release, push only the new tags):
+  ```sh
+  git tag otx/v0.2.0 <commit> && git push origin otx/v0.2.0
+  ```
+- **No aggregate / daily GitHub Release** is maintained for now. If a human-facing
+  changelog is ever wanted, add it as a separate aggregate release layer
+  (`release-<date>`) decoupled from the per-module resolution tags — do not
+  conflate the two.
