@@ -81,21 +81,6 @@ var _ gollem.ToolSet = (*ToolSet)(nil)
 // Option configures a ToolSet.
 type Option func(*ToolSet)
 
-// WithAppID sets the GitHub App ID. It is required.
-func WithAppID(id int64) Option {
-	return func(t *ToolSet) { t.appID = id }
-}
-
-// WithInstallationID sets the GitHub App installation ID. It is required.
-func WithInstallationID(id int64) Option {
-	return func(t *ToolSet) { t.installationID = id }
-}
-
-// WithPrivateKey sets the GitHub App private key in PEM format. It is required.
-func WithPrivateKey(pem string) Option {
-	return func(t *ToolSet) { t.privateKey = pem }
-}
-
 // WithLogger sets the logger. A nil logger keeps the default (slog.Default()).
 func WithLogger(logger *slog.Logger) Option {
 	return func(t *ToolSet) {
@@ -105,25 +90,30 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// New constructs the ToolSet. It validates required fields and builds the
-// GitHub client using the ghinstallation transport — both of which are purely
-// local/in-memory operations. Use Ping to verify connectivity.
-func New(opts ...Option) (*ToolSet, error) {
+// New constructs the ToolSet with the three required credentials as positional
+// arguments. appID and installationID must be non-zero; privateKey must be a
+// non-empty PEM string. Optional settings (e.g. WithLogger) are passed as opts.
+// New performs only in-memory validation and transport construction; use Ping to
+// verify connectivity.
+func New(appID int64, installationID int64, privateKey string, opts ...Option) (*ToolSet, error) {
+	if appID == 0 {
+		return nil, goerr.New("GitHub App ID is required")
+	}
+	if installationID == 0 {
+		return nil, goerr.New("GitHub App installation ID is required")
+	}
+	if privateKey == "" {
+		return nil, goerr.New("GitHub App private key is required")
+	}
+
 	t := &ToolSet{
-		logger: slog.Default(),
+		appID:          appID,
+		installationID: installationID,
+		privateKey:     privateKey,
+		logger:         slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(t)
-	}
-
-	if t.appID == 0 {
-		return nil, goerr.New("GitHub App ID is required")
-	}
-	if t.installationID == 0 {
-		return nil, goerr.New("GitHub App installation ID is required")
-	}
-	if t.privateKey == "" {
-		return nil, goerr.New("GitHub App private key is required")
 	}
 
 	// Build the transport and client only when the test has not already

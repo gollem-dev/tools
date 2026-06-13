@@ -21,11 +21,7 @@ github.com/gollem-dev/tools/github
 ## Usage
 
 ```go
-ts, err := github.New(
-	github.WithAppID(123456),
-	github.WithInstallationID(7890123),
-	github.WithPrivateKey(pemString),
-)
+ts, err := github.New(123456, 7890123, pemString)
 if err != nil {
 	return err
 }
@@ -41,9 +37,6 @@ access tokens from the App ID, installation ID, and the App's PEM private key.
 
 | Option | Required | Default |
 |--------|----------|---------|
-| `WithAppID(int64)` | yes | — |
-| `WithInstallationID(int64)` | yes | — |
-| `WithPrivateKey(string)` | yes | — |
 | `WithLogger(*slog.Logger)` | no | `slog.Default()` |
 
 ## Testing

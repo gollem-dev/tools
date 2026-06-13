@@ -43,13 +43,6 @@ var _ gollem.ToolSet = (*ToolSet)(nil)
 // Option configures a ToolSet.
 type Option func(*ToolSet)
 
-// WithUserToken sets the Slack user token. It is required. The token must be a
-// user token (xoxp-…) with the search:read scope, not a bot token, because
-// search.messages requires user-level access.
-func WithUserToken(token string) Option {
-	return func(t *ToolSet) { t.userToken = token }
-}
-
 // WithBaseURL overrides the Slack API base URL (default: https://slack.com/api).
 func WithBaseURL(baseURL string) Option {
 	return func(t *ToolSet) {
@@ -77,10 +70,17 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// New constructs the ToolSet. It only validates static configuration; use Ping
-// to verify connectivity and credentials.
-func New(opts ...Option) (*ToolSet, error) {
+// New constructs the ToolSet with the required user token. It only validates
+// static configuration; use Ping to verify connectivity and credentials.
+// userToken must be a user token (xoxp-…) with the search:read scope; bot
+// tokens cannot call search.messages.
+func New(userToken string, opts ...Option) (*ToolSet, error) {
+	if userToken == "" {
+		return nil, goerr.New("Slack user token is required")
+	}
+
 	t := &ToolSet{
+		userToken: userToken,
 		baseURL:   defaultBaseURL,
 		client:    http.DefaultClient,
 		logger:    slog.Default(),
@@ -88,10 +88,6 @@ func New(opts ...Option) (*ToolSet, error) {
 	}
 	for _, opt := range opts {
 		opt(t)
-	}
-
-	if t.userToken == "" {
-		return nil, goerr.New("Slack user token is required")
 	}
 
 	return t, nil

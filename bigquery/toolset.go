@@ -55,11 +55,6 @@ var _ gollem.ToolSet = (*ToolSet)(nil)
 // Option configures a ToolSet.
 type Option func(*ToolSet)
 
-// WithProjectID sets the Google Cloud project ID. Required.
-func WithProjectID(id string) Option {
-	return func(t *ToolSet) { t.projectID = id }
-}
-
 // WithCredentials sets the path to a Google Cloud service account credentials
 // JSON file. When empty, Application Default Credentials are used.
 func WithCredentials(path string) Option {
@@ -126,11 +121,16 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// New constructs the ToolSet by applying opts, validating required fields,
-// loading config files from disk, and loading runbook SQL files. No network
+// New constructs the ToolSet with the required projectID, applies opts,
+// loads config files from disk, and loads runbook SQL files. No network
 // I/O is performed; use Ping to verify connectivity.
-func New(opts ...Option) (*ToolSet, error) {
+func New(projectID string, opts ...Option) (*ToolSet, error) {
+	if projectID == "" {
+		return nil, goerr.New("BigQuery project ID is required")
+	}
+
 	t := &ToolSet{
+		projectID:     projectID,
 		timeout:       defaultTimeout,
 		scanLimitStr:  defaultScanLimitStr,
 		logger:        slog.Default(),
@@ -139,10 +139,6 @@ func New(opts ...Option) (*ToolSet, error) {
 	}
 	for _, opt := range opts {
 		opt(t)
-	}
-
-	if t.projectID == "" {
-		return nil, goerr.New("BigQuery project ID is required (use WithProjectID)")
 	}
 
 	// Parse scan limit.

@@ -36,38 +36,25 @@ func devicesResponse(devices ...map[string]any) []byte {
 
 // TestNewMissingTenantID verifies that New errors when tenant ID is absent.
 func TestNewMissingTenantID(t *testing.T) {
-	_, err := intune.New(
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
-	)
+	_, err := intune.New("", "cid", "csecret")
 	gt.Error(t, err).Contains("tenant ID is required")
 }
 
 // TestNewMissingClientID verifies that New errors when client ID is absent.
 func TestNewMissingClientID(t *testing.T) {
-	_, err := intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientSecret("csecret"),
-	)
+	_, err := intune.New("tid", "", "csecret")
 	gt.Error(t, err).Contains("client ID is required")
 }
 
 // TestNewMissingClientSecret verifies that New errors when client secret is absent.
 func TestNewMissingClientSecret(t *testing.T) {
-	_, err := intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-	)
+	_, err := intune.New("tid", "cid", "")
 	gt.Error(t, err).Contains("client secret is required")
 }
 
 // TestSpecs verifies the tool specifications returned by Specs.
 func TestSpecs(t *testing.T) {
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
-	)).NoError(t)
+	ts := gt.R1(intune.New("tid", "cid", "csecret")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
 	gt.Array(t, specs).Length(2)
@@ -81,11 +68,7 @@ func TestSpecs(t *testing.T) {
 
 // TestRunInvalidName verifies that Run returns an error for unknown tool names.
 func TestRunInvalidName(t *testing.T) {
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
-	)).NoError(t)
+	ts := gt.R1(intune.New("tid", "cid", "csecret")).NoError(t)
 	_, err := ts.Run(context.Background(), "intune_unknown", map[string]any{})
 	gt.Error(t, err).Contains("invalid function name")
 }
@@ -142,10 +125,7 @@ func TestRunDevicesByUser(t *testing.T) {
 	srv, gotFilter, gotBearer := newMockServer(t, []map[string]any{device})
 	defer srv.Close()
 
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("mytenant"),
-		intune.WithClientID("myclient"),
-		intune.WithClientSecret("mysecret"),
+	ts := gt.R1(intune.New("mytenant", "myclient", "mysecret",
 		intune.WithTokenEndpoint(srv.URL+"/mytenant/oauth2/v2.0/token"),
 		intune.WithBaseURL(srv.URL),
 		intune.WithHTTPClient(srv.Client()),
@@ -184,10 +164,7 @@ func TestRunDevicesByHostname(t *testing.T) {
 	srv, gotFilter, gotBearer := newMockServer(t, []map[string]any{device})
 	defer srv.Close()
 
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("mytenant"),
-		intune.WithClientID("myclient"),
-		intune.WithClientSecret("mysecret"),
+	ts := gt.R1(intune.New("mytenant", "myclient", "mysecret",
 		intune.WithTokenEndpoint(srv.URL+"/mytenant/oauth2/v2.0/token"),
 		intune.WithBaseURL(srv.URL),
 		intune.WithHTTPClient(srv.Client()),
@@ -212,22 +189,14 @@ func TestRunDevicesByHostname(t *testing.T) {
 
 // TestRunDevicesByUserMissingParam verifies that Run errors when UPN is absent.
 func TestRunDevicesByUserMissingParam(t *testing.T) {
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
-	)).NoError(t)
+	ts := gt.R1(intune.New("tid", "cid", "csecret")).NoError(t)
 	_, err := ts.Run(context.Background(), "intune_devices_by_user", map[string]any{})
 	gt.Error(t, err).Contains("user_principal_name is required")
 }
 
 // TestRunDevicesByHostnameMissingParam verifies that Run errors when device name is absent.
 func TestRunDevicesByHostnameMissingParam(t *testing.T) {
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
-	)).NoError(t)
+	ts := gt.R1(intune.New("tid", "cid", "csecret")).NoError(t)
 	_, err := ts.Run(context.Background(), "intune_devices_by_hostname", map[string]any{})
 	gt.Error(t, err).Contains("device_name is required")
 }
@@ -246,10 +215,7 @@ func TestPing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
+	ts := gt.R1(intune.New("tid", "cid", "csecret",
 		intune.WithTokenEndpoint(srv.URL+"/tid/oauth2/v2.0/token"),
 		intune.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -266,10 +232,7 @@ func TestPingTokenFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("bad-client"),
-		intune.WithClientSecret("bad-secret"),
+	ts := gt.R1(intune.New("tid", "bad-client", "bad-secret",
 		intune.WithTokenEndpoint(srv.URL+"/tid/oauth2/v2.0/token"),
 		intune.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -297,10 +260,7 @@ func TestTokenAcquiredOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ts := gt.R1(intune.New(
-		intune.WithTenantID("tid"),
-		intune.WithClientID("cid"),
-		intune.WithClientSecret("csecret"),
+	ts := gt.R1(intune.New("tid", "cid", "csecret",
 		intune.WithTokenEndpoint(srv.URL+"/tid/oauth2/v2.0/token"),
 		intune.WithBaseURL(srv.URL),
 		intune.WithHTTPClient(srv.Client()),
@@ -344,11 +304,7 @@ func TestLive(t *testing.T) {
 		t.Skip("TEST_INTUNE_USER is not set")
 	}
 
-	ts := gt.R1(intune.New(
-		intune.WithTenantID(tenantID),
-		intune.WithClientID(clientID),
-		intune.WithClientSecret(clientSecret),
-	)).NoError(t)
+	ts := gt.R1(intune.New(tenantID, clientID, clientSecret)).NoError(t)
 
 	gt.NoError(t, ts.Ping(context.Background())).Required()
 

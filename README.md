@@ -35,7 +35,7 @@ import (
 )
 
 func setup(ctx context.Context) (gollem.ToolSet, error) {
-	ts, err := otx.New(otx.WithAPIKey("..."))
+	ts, err := otx.New("...")
 	if err != nil {
 		return nil, err
 	}

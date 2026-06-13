@@ -16,12 +16,12 @@ import (
 const validResponse = `{"query_status":"ok","data":[{"sha256_hash":"b3d9ea5fb70f1b6ecf74f36e3a88da0ac44dd8afb4a4d70e8f15fa10f6fa3f7b","file_name":"sample.exe"}]}`
 
 func TestNewRequiresAPIKey(t *testing.T) {
-	_, err := abusech.New()
+	_, err := abusech.New("")
 	gt.Error(t, err).Contains("API key")
 }
 
 func TestSpecs(t *testing.T) {
-	ts := gt.R1(abusech.New(abusech.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(abusech.New("dummy")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
 	gt.Array(t, specs).Length(1)
@@ -48,7 +48,7 @@ func TestRun(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(abusech.New(
-		abusech.WithAPIKey("test-key"),
+		"test-key",
 		abusech.WithBaseURL(srv.URL),
 		abusech.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -68,14 +68,14 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunInvalidName(t *testing.T) {
-	ts := gt.R1(abusech.New(abusech.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(abusech.New("dummy")).NoError(t)
 
 	_, err := ts.Run(context.Background(), "abusech.unknown", map[string]any{"hash": "abc"})
 	gt.Error(t, err).Contains("invalid function name")
 }
 
 func TestRunMissingHash(t *testing.T) {
-	ts := gt.R1(abusech.New(abusech.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(abusech.New("dummy")).NoError(t)
 
 	_, err := ts.Run(context.Background(), "abusech.bazaar.query", map[string]any{})
 	gt.Error(t, err).Contains("hash is required")
@@ -89,7 +89,7 @@ func TestRunHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(abusech.New(
-		abusech.WithAPIKey("bad"),
+		"bad",
 		abusech.WithBaseURL(srv.URL),
 		abusech.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -106,7 +106,7 @@ func TestRunAPIError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(abusech.New(
-		abusech.WithAPIKey("key"),
+		"key",
 		abusech.WithBaseURL(srv.URL),
 		abusech.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -133,7 +133,7 @@ func TestPing(t *testing.T) {
 	gt.Value(t, parsedURL).NotNil()
 
 	ts := gt.R1(abusech.New(
-		abusech.WithAPIKey("k"),
+		"k",
 		abusech.WithBaseURL(srv.URL),
 		abusech.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -150,7 +150,7 @@ func TestLive(t *testing.T) {
 		t.Skip("TEST_ABUSECH_API_KEY is not set")
 	}
 
-	ts := gt.R1(abusech.New(abusech.WithAPIKey(apiKey))).NoError(t)
+	ts := gt.R1(abusech.New(apiKey)).NoError(t)
 
 	gt.NoError(t, ts.Ping(context.Background())).Required()
 

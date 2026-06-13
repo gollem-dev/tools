@@ -17,7 +17,7 @@ github.com/gollem-dev/tools/slack
 ## Usage
 
 ```go
-ts, err := slack.New(slack.WithUserToken("xoxp-..."))
+ts, err := slack.New("xoxp-...")
 if err != nil {
 	return err
 }
@@ -31,12 +31,14 @@ the `search:read` scope; bot tokens cannot call it.
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithUserToken(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://slack.com/api` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+The first argument to `New` is the required user token (`xoxp-…` with the
+`search:read` scope).
+
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://slack.com/api` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

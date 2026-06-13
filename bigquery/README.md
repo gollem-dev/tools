@@ -26,8 +26,7 @@ back, so those two tools require `WithStorageBucket`. Queries are capped by
 ## Usage
 
 ```go
-ts, err := bigquery.New(
-	bigquery.WithProjectID("my-project"),
+ts, err := bigquery.New("my-project",
 	bigquery.WithStorageBucket("my-result-bucket"), // needed for query/result
 )
 if err != nil {
@@ -45,7 +44,6 @@ Credentials come from Application Default Credentials unless overridden with
 
 | Option | Required | Default |
 |--------|----------|---------|
-| `WithProjectID(string)` | yes | — |
 | `WithStorageBucket(string)` | for `query`/`result` | — |
 | `WithStoragePrefix(string)` | no | — |
 | `WithCredentials(string)` | no | Application Default Credentials |

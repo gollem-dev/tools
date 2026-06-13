@@ -13,12 +13,12 @@ import (
 )
 
 func TestNewRequiresAPIKey(t *testing.T) {
-	_, err := shodan.New()
+	_, err := shodan.New("")
 	gt.Error(t, err).Contains("API key")
 }
 
 func TestSpecs(t *testing.T) {
-	ts := gt.R1(shodan.New(shodan.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(shodan.New("dummy")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
 	gt.Array(t, specs).Length(3)
@@ -53,7 +53,7 @@ func TestRunHost(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(shodan.New(
-		shodan.WithAPIKey("test-key"),
+		"test-key",
 		shodan.WithBaseURL(srv.URL),
 		shodan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -78,7 +78,7 @@ func TestRunDomain(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(shodan.New(
-		shodan.WithAPIKey("key"),
+		"key",
 		shodan.WithBaseURL(srv.URL),
 		shodan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -104,7 +104,7 @@ func TestRunSearch(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(shodan.New(
-		shodan.WithAPIKey("key"),
+		"key",
 		shodan.WithBaseURL(srv.URL),
 		shodan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -121,14 +121,14 @@ func TestRunSearch(t *testing.T) {
 }
 
 func TestRunInvalidName(t *testing.T) {
-	ts := gt.R1(shodan.New(shodan.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(shodan.New("dummy")).NoError(t)
 
 	_, err := ts.Run(context.Background(), "shodan_unknown", map[string]any{"target": "x"})
 	gt.Error(t, err).Contains("invalid function name")
 }
 
 func TestRunMissingTarget(t *testing.T) {
-	ts := gt.R1(shodan.New(shodan.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(shodan.New("dummy")).NoError(t)
 
 	_, err := ts.Run(context.Background(), "shodan_host", map[string]any{})
 	gt.Error(t, err).Contains("target is required")
@@ -142,7 +142,7 @@ func TestRunHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(shodan.New(
-		shodan.WithAPIKey("bad"),
+		"bad",
 		shodan.WithBaseURL(srv.URL),
 		shodan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -159,7 +159,7 @@ func TestRunAPIErrorInBody(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(shodan.New(
-		shodan.WithAPIKey("key"),
+		"key",
 		shodan.WithBaseURL(srv.URL),
 		shodan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -178,7 +178,7 @@ func TestPing(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(shodan.New(
-		shodan.WithAPIKey("k"),
+		"k",
 		shodan.WithBaseURL(srv.URL),
 		shodan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -194,7 +194,7 @@ func TestLive(t *testing.T) {
 		t.Skip("TEST_SHODAN_API_KEY is not set")
 	}
 
-	ts := gt.R1(shodan.New(shodan.WithAPIKey(apiKey))).NoError(t)
+	ts := gt.R1(shodan.New(apiKey)).NoError(t)
 
 	gt.NoError(t, ts.Ping(context.Background())).Required()
 

@@ -17,7 +17,7 @@ github.com/gollem-dev/tools/ipdb
 ## Usage
 
 ```go
-ts, err := ipdb.New(ipdb.WithAPIKey("..."))
+ts, err := ipdb.New("your-api-key")
 if err != nil {
 	return err
 }
@@ -28,12 +28,11 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithAPIKey(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://api.abuseipdb.com/api/v2` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://api.abuseipdb.com/api/v2` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

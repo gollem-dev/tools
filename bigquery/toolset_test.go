@@ -38,13 +38,12 @@ columns:
 // ---------------------------------------------------------------------------
 
 func TestNew_MissingProjectID(t *testing.T) {
-	_, err := bqtool.New()
+	_, err := bqtool.New("")
 	gt.Error(t, err)
 }
 
 func TestNew_ScanLimitParseError(t *testing.T) {
-	_, err := bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	_, err := bqtool.New("my-project",
 		bqtool.WithScanLimit("not-a-number"),
 	)
 	gt.Error(t, err)
@@ -54,8 +53,7 @@ func TestNew_WithConfigFiles(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 	)).NoError(t)
 	gt.NotNil(t, ts)
@@ -65,8 +63,7 @@ func TestNew_WithConfigDir(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{dir}),
 	)).NoError(t)
 	gt.NotNil(t, ts)
@@ -80,8 +77,7 @@ func TestSpecs_SixTools(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 	)).NoError(t)
 
@@ -110,8 +106,7 @@ func TestRun_ListDataset(t *testing.T) {
 	cfgPath := writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
 	mockClient := bqtool.NewMockClient()
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithClientFactoryForTest(&bqtool.MockClientFactory{Client: mockClient}),
 	)).NoError(t)
@@ -139,8 +134,7 @@ func TestRun_Schema(t *testing.T) {
 		},
 	}
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithClientFactoryForTest(&bqtool.MockClientFactory{Client: mockClient}),
 	)).NoError(t)
@@ -157,8 +151,7 @@ func TestRun_Schema_MissingProjectID(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithClientFactoryForTest(&bqtool.MockClientFactory{Client: bqtool.NewMockClient()}),
 	)).NoError(t)
@@ -179,8 +172,7 @@ func TestRun_TableSummary(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 	)).NoError(t)
 
@@ -202,8 +194,7 @@ func TestRun_TableSummary_WithFilter(t *testing.T) {
 	writeConfigFile(t, dir, "a.yaml", "dataset_id: ds_a\ntable_id: tbl_a\n")
 	writeConfigFile(t, dir, "b.yaml", "dataset_id: ds_b\ntable_id: tbl_b\n")
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{dir}),
 	)).NoError(t)
 
@@ -230,8 +221,7 @@ func TestRun_GetRunbookEntry(t *testing.T) {
 	sqlPath := filepath.Join(dir, "query.sql")
 	gt.NoError(t, os.WriteFile(sqlPath, []byte(sqlContent), 0600))
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithRunbookPaths([]string{sqlPath}),
 	)).NoError(t)
@@ -264,8 +254,7 @@ func TestRun_GetRunbookEntry_FromDir(t *testing.T) {
 	sqlContent := "-- Title: Test Query\n-- Description: A simple test query.\nSELECT 1;\n"
 	gt.NoError(t, os.WriteFile(filepath.Join(sqlDir, "test.sql"), []byte(sqlContent), 0600))
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithRunbookPaths([]string{sqlDir}),
 	)).NoError(t)
@@ -298,8 +287,7 @@ func TestRun_QueryResultFlow(t *testing.T) {
 
 	memStore := bqtool.NewMemStorageForTest()
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithStorageBucket("test-bucket"),
 		bqtool.WithClientFactoryForTest(&bqtool.MockClientFactory{Client: mockClient}),
@@ -352,8 +340,7 @@ func TestRun_QueryResultPagination(t *testing.T) {
 
 	memStore := bqtool.NewMemStorageForTest()
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithStorageBucket("test-bucket"),
 		bqtool.WithClientFactoryForTest(&bqtool.MockClientFactory{Client: mockClient}),
@@ -400,8 +387,7 @@ func TestRun_InvalidToolName(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeConfigFile(t, dir, "table.yaml", minimalConfigYAML)
 
-	ts := gt.R1(bqtool.New(
-		bqtool.WithProjectID("my-project"),
+	ts := gt.R1(bqtool.New("my-project",
 		bqtool.WithConfigFiles([]string{cfgPath}),
 		bqtool.WithClientFactoryForTest(&bqtool.MockClientFactory{Client: bqtool.NewMockClient()}),
 	)).NoError(t)
@@ -438,7 +424,6 @@ func TestLive(t *testing.T) {
 
 	// --- build base ToolSet options ---
 	var opts []bqtool.Option
-	opts = append(opts, bqtool.WithProjectID(projectID))
 
 	if creds, ok := os.LookupEnv("TEST_BIGQUERY_CREDENTIALS"); ok {
 		opts = append(opts, bqtool.WithCredentials(creds))
@@ -454,7 +439,7 @@ func TestLive(t *testing.T) {
 		opts = append(opts, bqtool.WithConfigFiles([]string{cfgPath}))
 	}
 
-	ts := gt.R1(bqtool.New(opts...)).NoError(t)
+	ts := gt.R1(bqtool.New(projectID, opts...)).NoError(t)
 
 	// Verify connectivity.
 	gt.NoError(t, ts.Ping(ctx))
@@ -556,13 +541,13 @@ func TestLive(t *testing.T) {
 		gt.NoError(t, os.WriteFile(sqlPath, []byte(sqlContent), 0600))
 
 		// Build a separate ToolSet that knows about the runbook directory.
-		rbOpts := append([]bqtool.Option(nil), bqtool.WithProjectID(projectID))
+		var rbOpts []bqtool.Option
 		if creds, ok := os.LookupEnv("TEST_BIGQUERY_CREDENTIALS"); ok {
 			rbOpts = append(rbOpts, bqtool.WithCredentials(creds))
 		}
 		rbOpts = append(rbOpts, bqtool.WithRunbookPaths([]string{runbookDir}))
 
-		rbTS := gt.R1(bqtool.New(rbOpts...)).NoError(t)
+		rbTS := gt.R1(bqtool.New(projectID, rbOpts...)).NoError(t)
 
 		// Retrieve the runbook ID assigned at load time (a random UUID).
 		ids := bqtool.RunbookIDsForTest(rbTS)
