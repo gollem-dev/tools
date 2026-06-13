@@ -19,7 +19,7 @@ The tool submits the URL, then polls for the finished result, honouring
 ## Usage
 
 ```go
-ts, err := urlscan.New(urlscan.WithAPIKey("..."))
+ts, err := urlscan.New("your-api-key")
 if err != nil {
 	return err
 }
@@ -30,14 +30,13 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithAPIKey(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://urlscan.io/api/v1` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithBackoff(time.Duration)` | no | `3s` |
-| `WithTimeout(time.Duration)` | no | `30s` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://urlscan.io/api/v1` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithBackoff(time.Duration)` | `3s` |
+| `WithTimeout(time.Duration)` | `30s` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

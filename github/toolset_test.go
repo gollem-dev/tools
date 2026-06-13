@@ -52,9 +52,9 @@ const testPEM = "placeholder-private-key-for-tests-only"
 func newFakeToolSet(t *testing.T, fake *fakeClient) *github.ToolSet {
 	t.Helper()
 	ts := gt.R1(github.New(
-		github.WithAppID(12345),
-		github.WithInstallationID(67890),
-		github.WithPrivateKey(testPEM),
+		12345,
+		67890,
+		testPEM,
 		github.WithClientForTest(fake),
 	)).NoError(t)
 	return ts
@@ -65,35 +65,22 @@ func newFakeToolSet(t *testing.T, fake *fakeClient) *github.ToolSet {
 // ---------------------------------------------------------------------------
 
 func TestNewMissingAppID(t *testing.T) {
-	_, err := github.New(
-		github.WithInstallationID(1),
-		github.WithPrivateKey(testPEM),
-	)
+	_, err := github.New(0, 1, testPEM)
 	gt.Error(t, err).Contains("App ID")
 }
 
 func TestNewMissingInstallationID(t *testing.T) {
-	_, err := github.New(
-		github.WithAppID(1),
-		github.WithPrivateKey(testPEM),
-	)
+	_, err := github.New(1, 0, testPEM)
 	gt.Error(t, err).Contains("installation ID")
 }
 
 func TestNewMissingPrivateKey(t *testing.T) {
-	_, err := github.New(
-		github.WithAppID(1),
-		github.WithInstallationID(1),
-	)
+	_, err := github.New(1, 1, "")
 	gt.Error(t, err).Contains("private key")
 }
 
 func TestNewInvalidPEM(t *testing.T) {
-	_, err := github.New(
-		github.WithAppID(1),
-		github.WithInstallationID(1),
-		github.WithPrivateKey("not-a-pem"),
-	)
+	_, err := github.New(1, 1, "not-a-pem")
 	gt.Error(t, err)
 }
 
@@ -203,11 +190,7 @@ func TestLive(t *testing.T) {
 	gt.Array(t, parts).Length(2)
 	owner, repo := parts[0], parts[1]
 
-	ts := gt.R1(github.New(
-		github.WithAppID(appID),
-		github.WithInstallationID(installationID),
-		github.WithPrivateKey(privateKey),
-	)).NoError(t)
+	ts := gt.R1(github.New(appID, installationID, privateKey)).NoError(t)
 
 	// Verify connectivity.
 	gt.NoError(t, ts.Ping(context.Background())).Required()

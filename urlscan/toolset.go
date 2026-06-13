@@ -38,11 +38,6 @@ var _ gollem.ToolSet = (*ToolSet)(nil)
 // Option configures a ToolSet.
 type Option func(*ToolSet)
 
-// WithAPIKey sets the urlscan.io API key. It is required.
-func WithAPIKey(key string) Option {
-	return func(t *ToolSet) { t.apiKey = key }
-}
-
 // WithBaseURL overrides the urlscan.io API base URL.
 func WithBaseURL(baseURL string) Option {
 	return func(t *ToolSet) {
@@ -92,8 +87,12 @@ func WithTimeout(d time.Duration) Option {
 
 // New constructs the ToolSet. It only validates static configuration; use Ping
 // to verify connectivity and credentials.
-func New(opts ...Option) (*ToolSet, error) {
+func New(apiKey string, opts ...Option) (*ToolSet, error) {
+	if apiKey == "" {
+		return nil, goerr.New("urlscan API key is required")
+	}
 	t := &ToolSet{
+		apiKey:  apiKey,
 		baseURL: defaultBaseURL,
 		backoff: defaultBackoff,
 		timeout: defaultTimeout,
@@ -102,10 +101,6 @@ func New(opts ...Option) (*ToolSet, error) {
 	}
 	for _, opt := range opts {
 		opt(t)
-	}
-
-	if t.apiKey == "" {
-		return nil, goerr.New("urlscan API key is required")
 	}
 	if _, err := url.Parse(t.baseURL); err != nil {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))

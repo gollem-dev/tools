@@ -14,12 +14,12 @@ import (
 )
 
 func TestNewRequiresAPIKey(t *testing.T) {
-	_, err := otx.New()
+	_, err := otx.New("")
 	gt.Error(t, err).Contains("API key")
 }
 
 func TestSpecs(t *testing.T) {
-	ts := gt.R1(otx.New(otx.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(otx.New("dummy")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
 	gt.Array(t, specs).Length(5)
@@ -45,7 +45,7 @@ func TestRun(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(otx.New(
-		otx.WithAPIKey("test-key"),
+		"test-key",
 		otx.WithBaseURL(srv.URL),
 		otx.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -58,13 +58,13 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunInvalidName(t *testing.T) {
-	ts := gt.R1(otx.New(otx.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(otx.New("dummy")).NoError(t)
 	_, err := ts.Run(context.Background(), "otx_unknown", map[string]any{"target": "x"})
 	gt.Error(t, err).Contains("invalid function name")
 }
 
 func TestRunMissingTarget(t *testing.T) {
-	ts := gt.R1(otx.New(otx.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(otx.New("dummy")).NoError(t)
 	_, err := ts.Run(context.Background(), "otx_ipv4", map[string]any{})
 	gt.Error(t, err).Contains("target is required")
 }
@@ -77,7 +77,7 @@ func TestRunHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(otx.New(
-		otx.WithAPIKey("bad"),
+		"bad",
 		otx.WithBaseURL(srv.URL),
 		otx.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -94,7 +94,7 @@ func TestPing(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(otx.New(
-		otx.WithAPIKey("k"),
+		"k",
 		otx.WithBaseURL(srv.URL),
 		otx.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -109,7 +109,7 @@ func TestLive(t *testing.T) {
 		t.Skip("TEST_OTX_API_KEY is not set")
 	}
 
-	ts := gt.R1(otx.New(otx.WithAPIKey(apiKey))).NoError(t)
+	ts := gt.R1(otx.New(apiKey)).NoError(t)
 
 	gt.NoError(t, ts.Ping(context.Background())).Required()
 

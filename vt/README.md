@@ -19,7 +19,7 @@ github.com/gollem-dev/tools/vt
 ## Usage
 
 ```go
-ts, err := vt.New(vt.WithAPIKey("..."))
+ts, err := vt.New("YOUR_API_KEY")
 if err != nil {
 	return err
 }
@@ -30,12 +30,11 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithAPIKey(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://www.virustotal.com/api/v3` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://www.virustotal.com/api/v3` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

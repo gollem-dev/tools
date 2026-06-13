@@ -16,7 +16,7 @@ github.com/gollem-dev/tools/abusech
 ## Usage
 
 ```go
-ts, err := abusech.New(abusech.WithAPIKey("..."))
+ts, err := abusech.New("your-api-key")
 if err != nil {
 	return err
 }
@@ -27,12 +27,11 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithAPIKey(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://mb-api.abuse.ch/api/v1` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://mb-api.abuse.ch/api/v1` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

@@ -32,11 +32,6 @@ var _ gollem.ToolSet = (*ToolSet)(nil)
 // Option configures a ToolSet.
 type Option func(*ToolSet)
 
-// WithAPIKey sets the Shodan API key. It is required.
-func WithAPIKey(key string) Option {
-	return func(t *ToolSet) { t.apiKey = key }
-}
-
 // WithBaseURL overrides the Shodan API base URL.
 func WithBaseURL(baseURL string) Option {
 	return func(t *ToolSet) {
@@ -66,8 +61,13 @@ func WithLogger(logger *slog.Logger) Option {
 
 // New constructs the ToolSet. It only validates static configuration; use Ping
 // to verify connectivity and credentials.
-func New(opts ...Option) (*ToolSet, error) {
+func New(apiKey string, opts ...Option) (*ToolSet, error) {
+	if apiKey == "" {
+		return nil, goerr.New("Shodan API key is required")
+	}
+
 	t := &ToolSet{
+		apiKey:  apiKey,
 		baseURL: defaultBaseURL,
 		client:  http.DefaultClient,
 		logger:  slog.Default(),
@@ -76,9 +76,6 @@ func New(opts ...Option) (*ToolSet, error) {
 		opt(t)
 	}
 
-	if t.apiKey == "" {
-		return nil, goerr.New("Shodan API key is required")
-	}
 	if _, err := url.Parse(t.baseURL); err != nil {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}

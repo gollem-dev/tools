@@ -15,17 +15,17 @@ import (
 )
 
 func TestNewRequiresAPIKey(t *testing.T) {
-	_, err := urlscan.New()
+	_, err := urlscan.New("")
 	gt.Error(t, err).Contains("API key")
 }
 
 func TestNewWithAPIKey(t *testing.T) {
-	ts := gt.R1(urlscan.New(urlscan.WithAPIKey("test-key"))).NoError(t)
+	ts := gt.R1(urlscan.New("test-key")).NoError(t)
 	gt.Value(t, ts).NotNil()
 }
 
 func TestSpecs(t *testing.T) {
-	ts := gt.R1(urlscan.New(urlscan.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(urlscan.New("dummy")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
 	gt.Array(t, specs).Length(1)
@@ -34,13 +34,13 @@ func TestSpecs(t *testing.T) {
 }
 
 func TestRunInvalidName(t *testing.T) {
-	ts := gt.R1(urlscan.New(urlscan.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(urlscan.New("dummy")).NoError(t)
 	_, err := ts.Run(context.Background(), "urlscan_unknown", map[string]any{"url": "https://example.com"})
 	gt.Error(t, err).Contains("invalid function name")
 }
 
 func TestRunMissingURL(t *testing.T) {
-	ts := gt.R1(urlscan.New(urlscan.WithAPIKey("dummy"))).NoError(t)
+	ts := gt.R1(urlscan.New("dummy")).NoError(t)
 	_, err := ts.Run(context.Background(), "urlscan_scan", map[string]any{})
 	gt.Error(t, err).Contains("url parameter is required")
 }
@@ -86,7 +86,7 @@ func TestRunMock(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(urlscan.New(
-		urlscan.WithAPIKey("test-key"),
+		"test-key",
 		urlscan.WithBaseURL(srv.URL),
 		urlscan.WithHTTPClient(srv.Client()),
 		urlscan.WithBackoff(1*time.Millisecond),
@@ -108,7 +108,7 @@ func TestRunHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(urlscan.New(
-		urlscan.WithAPIKey("bad-key"),
+		"bad-key",
 		urlscan.WithBaseURL(srv.URL),
 		urlscan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -131,7 +131,7 @@ func TestRunTimeout(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(urlscan.New(
-		urlscan.WithAPIKey("key"),
+		"key",
 		urlscan.WithBaseURL(srv.URL),
 		urlscan.WithHTTPClient(srv.Client()),
 		urlscan.WithBackoff(1*time.Millisecond),
@@ -157,7 +157,7 @@ func TestRunContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ts := gt.R1(urlscan.New(
-		urlscan.WithAPIKey("key"),
+		"key",
 		urlscan.WithBaseURL(srv.URL),
 		urlscan.WithHTTPClient(srv.Client()),
 		urlscan.WithBackoff(50*time.Millisecond),
@@ -183,7 +183,7 @@ func TestPing(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(urlscan.New(
-		urlscan.WithAPIKey("ping-key"),
+		"ping-key",
 		urlscan.WithBaseURL(srv.URL),
 		urlscan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -198,7 +198,7 @@ func TestPingServerError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(urlscan.New(
-		urlscan.WithAPIKey("key"),
+		"key",
 		urlscan.WithBaseURL(srv.URL),
 		urlscan.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -215,7 +215,7 @@ func TestLive(t *testing.T) {
 		t.Skip("TEST_URLSCAN_API_KEY is not set")
 	}
 
-	ts := gt.R1(urlscan.New(urlscan.WithAPIKey(apiKey))).NoError(t)
+	ts := gt.R1(urlscan.New(apiKey)).NoError(t)
 
 	gt.NoError(t, ts.Ping(context.Background())).Required()
 

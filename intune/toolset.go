@@ -53,21 +53,6 @@ var _ gollem.ToolSet = (*ToolSet)(nil)
 // Option configures a ToolSet.
 type Option func(*ToolSet)
 
-// WithTenantID sets the Azure AD tenant ID. It is required.
-func WithTenantID(tenantID string) Option {
-	return func(t *ToolSet) { t.tenantID = tenantID }
-}
-
-// WithClientID sets the Azure AD application (client) ID. It is required.
-func WithClientID(clientID string) Option {
-	return func(t *ToolSet) { t.clientID = clientID }
-}
-
-// WithClientSecret sets the Azure AD client secret. It is required.
-func WithClientSecret(clientSecret string) Option {
-	return func(t *ToolSet) { t.clientSecret = clientSecret }
-}
-
 // WithBaseURL overrides the Microsoft Graph API base URL
 // (default: https://graph.microsoft.com/v1.0).
 func WithBaseURL(baseURL string) Option {
@@ -106,26 +91,30 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// New constructs the ToolSet. It only validates static configuration; use Ping
-// to verify connectivity and credentials.
-func New(opts ...Option) (*ToolSet, error) {
+// New constructs the ToolSet with the required Azure AD credentials.
+// tenantID, clientID, and clientSecret must all be non-empty.
+// It only validates static configuration; use Ping to verify connectivity and credentials.
+func New(tenantID string, clientID string, clientSecret string, opts ...Option) (*ToolSet, error) {
+	if tenantID == "" {
+		return nil, goerr.New("Intune tenant ID is required")
+	}
+	if clientID == "" {
+		return nil, goerr.New("Intune client ID is required")
+	}
+	if clientSecret == "" {
+		return nil, goerr.New("Intune client secret is required")
+	}
+
 	t := &ToolSet{
-		baseURL: defaultGraphBaseURL,
-		client:  http.DefaultClient,
-		logger:  slog.Default(),
+		tenantID:     tenantID,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		baseURL:      defaultGraphBaseURL,
+		client:       http.DefaultClient,
+		logger:       slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(t)
-	}
-
-	if t.tenantID == "" {
-		return nil, goerr.New("Intune tenant ID is required")
-	}
-	if t.clientID == "" {
-		return nil, goerr.New("Intune client ID is required")
-	}
-	if t.clientSecret == "" {
-		return nil, goerr.New("Intune client secret is required")
 	}
 
 	// Derive the default token endpoint from tenantID (pure string build, no network).

@@ -20,7 +20,7 @@ github.com/gollem-dev/tools/otx
 ## Usage
 
 ```go
-ts, err := otx.New(otx.WithAPIKey("..."))
+ts, err := otx.New("your-api-key")
 if err != nil {
 	return err
 }
@@ -31,12 +31,11 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithAPIKey(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://otx.alienvault.com/api/v1` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://otx.alienvault.com/api/v1` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

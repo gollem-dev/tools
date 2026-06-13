@@ -18,7 +18,7 @@ github.com/gollem-dev/tools/shodan
 ## Usage
 
 ```go
-ts, err := shodan.New(shodan.WithAPIKey("..."))
+ts, err := shodan.New("YOUR_API_KEY")
 if err != nil {
 	return err
 }
@@ -29,12 +29,11 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 
 ## Options
 
-| Option | Required | Default |
-|--------|----------|---------|
-| `WithAPIKey(string)` | yes | — |
-| `WithBaseURL(string)` | no | `https://api.shodan.io` |
-| `WithHTTPClient(*http.Client)` | no | `http.DefaultClient` |
-| `WithLogger(*slog.Logger)` | no | `slog.Default()` |
+| Option | Default |
+|--------|---------|
+| `WithBaseURL(string)` | `https://api.shodan.io` |
+| `WithHTTPClient(*http.Client)` | `http.DefaultClient` |
+| `WithLogger(*slog.Logger)` | `slog.Default()` |
 
 ## Testing
 

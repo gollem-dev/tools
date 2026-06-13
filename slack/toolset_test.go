@@ -14,15 +14,15 @@ import (
 	"github.com/m-mizutani/gt"
 )
 
-// TestNewRequiresUserToken verifies that New returns an error when no token is provided.
+// TestNewRequiresUserToken verifies that New returns an error when an empty token is provided.
 func TestNewRequiresUserToken(t *testing.T) {
-	_, err := slack.New()
+	_, err := slack.New("")
 	gt.Error(t, err).Contains("user token is required")
 }
 
 // TestSpecs verifies the tool specifications returned by Specs.
 func TestSpecs(t *testing.T) {
-	ts := gt.R1(slack.New(slack.WithUserToken("xoxp-dummy"))).NoError(t)
+	ts := gt.R1(slack.New("xoxp-dummy")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
 	gt.Array(t, specs).Length(1)
@@ -39,14 +39,14 @@ func TestSpecs(t *testing.T) {
 
 // TestRunInvalidName verifies that Run returns an error for unknown tool names.
 func TestRunInvalidName(t *testing.T) {
-	ts := gt.R1(slack.New(slack.WithUserToken("xoxp-dummy"))).NoError(t)
+	ts := gt.R1(slack.New("xoxp-dummy")).NoError(t)
 	_, err := ts.Run(context.Background(), "slack_unknown", map[string]any{"query": "test"})
 	gt.Error(t, err).Contains("invalid function name")
 }
 
 // TestRunMissingQuery verifies that Run returns an error when query is absent.
 func TestRunMissingQuery(t *testing.T) {
-	ts := gt.R1(slack.New(slack.WithUserToken("xoxp-dummy"))).NoError(t)
+	ts := gt.R1(slack.New("xoxp-dummy")).NoError(t)
 	_, err := ts.Run(context.Background(), "slack_message_search", map[string]any{})
 	gt.Error(t, err).Contains("query is required")
 }
@@ -89,7 +89,7 @@ func TestRunHappyPath(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(slack.New(
-		slack.WithUserToken("xoxp-testtoken"),
+		"xoxp-testtoken",
 		slack.WithBaseURL(srv.URL),
 		slack.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -126,7 +126,7 @@ func TestRunSlackAPIError(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(slack.New(
-		slack.WithUserToken("xoxp-bad"),
+		"xoxp-bad",
 		slack.WithBaseURL(srv.URL),
 		slack.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -161,7 +161,7 @@ func TestRunRateLimitRetry(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(slack.New(
-		slack.WithUserToken("xoxp-k"),
+		"xoxp-k",
 		slack.WithBaseURL(srv.URL),
 		slack.WithHTTPClient(srv.Client()),
 		slack.WithRetryWaitForTest(time.Millisecond),
@@ -187,7 +187,7 @@ func TestRunRateLimitExhausted(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(slack.New(
-		slack.WithUserToken("xoxp-k"),
+		"xoxp-k",
 		slack.WithBaseURL(srv.URL),
 		slack.WithHTTPClient(srv.Client()),
 		slack.WithRetryWaitForTest(time.Millisecond),
@@ -210,7 +210,7 @@ func TestPing(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(slack.New(
-		slack.WithUserToken("xoxp-k"),
+		"xoxp-k",
 		slack.WithBaseURL(srv.URL),
 		slack.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -228,7 +228,7 @@ func TestPingAuthFailure(t *testing.T) {
 	defer srv.Close()
 
 	ts := gt.R1(slack.New(
-		slack.WithUserToken("xoxp-bad"),
+		"xoxp-bad",
 		slack.WithBaseURL(srv.URL),
 		slack.WithHTTPClient(srv.Client()),
 	)).NoError(t)
@@ -250,7 +250,7 @@ func TestLive(t *testing.T) {
 		t.Skip("TEST_SLACK_QUERY is not set")
 	}
 
-	ts := gt.R1(slack.New(slack.WithUserToken(token))).NoError(t)
+	ts := gt.R1(slack.New(token)).NoError(t)
 
 	gt.NoError(t, ts.Ping(context.Background())).Required()
 
