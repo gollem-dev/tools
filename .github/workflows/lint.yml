@@ -6,29 +6,30 @@ on:
   pull_request:
 
 jobs:
-  discover:
+  # Detect the modules affected by this change (see the changed-modules action).
+  changes:
     runs-on: ubuntu-latest
     outputs:
-      modules: ${{ steps.set.outputs.modules }}
+      modules: ${{ steps.detect.outputs.modules }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - id: set
-        run: |
-          modules=$(find . -name go.mod -printf '%h\n' | sed 's|^\./||' | sort | jq -R . | jq -cs .)
-          echo "modules=$modules" >> "$GITHUB_OUTPUT"
-          echo "Discovered modules: $modules"
+        with:
+          fetch-depth: 0
+      - id: detect
+        uses: ./.github/actions/changed-modules
 
   golangci:
     name: lint
-    needs: discover
+    needs: changes
+    if: needs.changes.outputs.modules != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        module: ${{ fromJson(needs.discover.outputs.modules) }}
+        module: ${{ fromJson(needs.changes.outputs.modules) }}
     env:
       GOWORK: off
     steps:

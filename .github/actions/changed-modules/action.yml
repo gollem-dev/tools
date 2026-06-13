@@ -1,0 +1,60 @@
+name: changed-modules
+description: >-
+  Detect which Go modules in this workspace are affected by the current push or
+  pull request, and emit them as a JSON array suitable for a build matrix.
+  The repository must already be checked out with full history (fetch-depth: 0).
+
+outputs:
+  modules:
+    description: JSON array of affected module directories (e.g. ["otx","vt"]).
+    value: ${{ steps.detect.outputs.modules }}
+
+runs:
+  using: composite
+  steps:
+    - id: detect
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
+        BEFORE_SHA: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+        all=$(find . -name go.mod -printf '%h\n' | sed 's|^\./||' | sort)
+
+        run_all=false
+        base=""
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          git fetch --no-tags origin "$BASE_REF" >/dev/null 2>&1 || true
+          base=$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null || true)
+          [ -z "$base" ] && run_all=true
+        else
+          base="$BEFORE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1; then
+            run_all=true
+          fi
+        fi
+
+        if [ "$run_all" = "true" ]; then
+          selected="$all"
+        else
+          changed=$(git diff --name-only "$base" HEAD)
+          # A shared change invalidates every module: all modules require the
+          # internal module via a replace, and go.work / lint config / CI affect
+          # everything.
+          if printf '%s\n' "$changed" | grep -qE '^(go\.work|\.golangci\.yml|\.github/|internal/)'; then
+            selected="$all"
+          else
+            selected=""
+            for m in $all; do
+              if printf '%s\n' "$changed" | grep -qE "^${m}/"; then
+                selected="$selected $m"
+              fi
+            done
+          fi
+        fi
+
+        modules=$(printf '%s\n' $selected | grep -v '^$' | sort -u | jq -R . | jq -cs .)
+        echo "modules=$modules" >> "$GITHUB_OUTPUT"
+        echo "Affected modules: $modules"

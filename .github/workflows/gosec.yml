@@ -8,7 +8,7 @@ on:
 jobs:
   # gosec runs as a Docker action that always executes from the repository root
   # (it ignores per-step working-directory). A single root scan with `./...`
-  # therefore already covers every module in the workspace, so no matrix is used.
+  # already covers every module in the workspace via the committed go.work.
   gosec:
     runs-on: ubuntu-latest
     permissions:
@@ -25,8 +25,7 @@ jobs:
       - name: Run Gosec Security Scanner
         uses: securego/gosec@5e5517beec77b8228ba43ec8d7cc22d82ed31924 # v2.25.0
         with:
-          # Let the SARIF report drive findings via the GitHub Security tab.
-          # The scan covers all workspace modules through the committed go.work.
+          # -no-fail lets the SARIF report drive findings via the Security tab.
           args: "-no-fail -fmt sarif -out results.sarif ./..."
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@7fc1baf373eb073c686865bd453d412d506a05a2 # v3.35.1

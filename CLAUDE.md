@@ -90,14 +90,20 @@ Two layers, both mandatory:
 
 ## CI (GitHub Actions)
 
-Workflows live in `.github/workflows/` and mirror the gollem project's setup,
-adapted for the multi-module layout:
+Workflows live in `.github/workflows/`, adapted for the multi-module layout:
 
-- `test.yml`, `lint.yml`, `gosec.yml` each start with a `discover` job that finds
-  every `go.mod` in the repo and feeds the directory list into a build matrix.
-  **New tool modules are picked up automatically** — no workflow edits needed.
+- `test.yml` and `lint.yml` first run a `changes` job that calls the reusable
+  composite action `.github/actions/changed-modules`. That action diffs the
+  push/PR and outputs a JSON array of the **affected** module directories, which
+  becomes the build matrix — so only changed modules are tested/linted. A change
+  to a shared input (`internal/`, `go.work`, `.golangci.yml`, or `.github/`)
+  rebuilds every module; a docs-only change builds none. New tool modules are
+  picked up automatically.
 - Matrix jobs run with `GOWORK=off` so each module is built/tested/linted through
   its own `go.mod` (and `replace`), exactly as an external consumer would.
+- `gosec.yml` runs a single scan from the repo root (the gosec Docker action
+  ignores per-step working-directory; `./...` over the committed `go.work`
+  already covers every module in one job).
 - `trivy.yml` runs a single filesystem scan (covers all `go.mod`/`go.sum`).
 - `integrity.yml` runs `.github/scripts/check-invisible-chars.sh` (Trojan-source /
   invisible-Unicode guard).
