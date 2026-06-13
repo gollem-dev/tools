@@ -6,33 +6,17 @@ on:
   pull_request:
 
 jobs:
-  discover:
-    runs-on: ubuntu-latest
-    outputs:
-      modules: ${{ steps.set.outputs.modules }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - id: set
-        run: |
-          modules=$(find . -name go.mod -printf '%h\n' | sed 's|^\./||' | sort | jq -R . | jq -cs .)
-          echo "modules=$modules" >> "$GITHUB_OUTPUT"
-          echo "Discovered modules: $modules"
-
+  # gosec runs as a Docker action that always executes from the repository root
+  # (it ignores per-step working-directory). A single root scan with `./...`
+  # therefore already covers every module in the workspace, so no matrix is used.
   gosec:
-    needs: discover
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       actions: read
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        module: ${{ fromJson(needs.discover.outputs.modules) }}
     env:
       GO111MODULE: on
-      GOWORK: off
     steps:
       - name: cicd-sensor
         uses: cicd-sensor/cicd-sensor-action@6ee257338e68af2b279b321b3346fe5f385aa498 # v0.0.29
@@ -41,11 +25,11 @@ jobs:
       - name: Run Gosec Security Scanner
         uses: securego/gosec@5e5517beec77b8228ba43ec8d7cc22d82ed31924 # v2.25.0
         with:
-          # Let the SARIF report drive failures via the GitHub Security tab.
+          # Let the SARIF report drive findings via the GitHub Security tab.
+          # The scan covers all workspace modules through the committed go.work.
           args: "-no-fail -fmt sarif -out results.sarif ./..."
-          working-directory: ${{ matrix.module }}
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@7fc1baf373eb073c686865bd453d412d506a05a2 # v3.35.1
         with:
-          sarif_file: ${{ matrix.module }}/results.sarif
-          category: gosec-${{ matrix.module }}
+          sarif_file: results.sarif
+          category: gosec
