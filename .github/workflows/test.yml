@@ -1,0 +1,49 @@
+name: test
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  # Discover every Go module in the workspace so the test matrix stays in sync
+  # automatically when a new tool module is added.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.set.outputs.modules }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - id: set
+        run: |
+          modules=$(find . -name go.mod -printf '%h\n' | sed 's|^\./||' | sort | jq -R . | jq -cs .)
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+          echo "Discovered modules: $modules"
+
+  testing:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.discover.outputs.modules) }}
+    # Test each module in isolation via its own go.mod (and replace directive),
+    # not through the workspace, so per-module dependency resolution is verified.
+    env:
+      GOWORK: off
+    steps:
+      - name: cicd-sensor
+        uses: cicd-sensor/cicd-sensor-action@6ee257338e68af2b279b321b3346fe5f385aa498 # v0.0.29
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: "${{ matrix.module }}/go.mod"
+          cache-dependency-path: "${{ matrix.module }}/go.sum"
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        run: go test -race ./...

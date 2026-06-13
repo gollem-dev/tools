@@ -1,0 +1,17 @@
+go 1.26.4
+
+use (
+	./abusech
+	./bigquery
+	./github
+	./internal
+	./intune
+	./ipdb
+	./otx
+	./shodan
+	./slack
+	./urlscan
+	./vt
+	./webfetch
+	./whois
+)
