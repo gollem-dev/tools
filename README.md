@@ -6,20 +6,20 @@ own Go module, so you only pull the dependencies of the tools you actually use.
 
 ## Available tools
 
-| Module | Description |
-|--------|-------------|
-| `github.com/gollem-dev/tools/otx` | AlienVault OTX threat-intelligence lookups (IPv4 / IPv6 / domain / hostname / file hash). |
-| `github.com/gollem-dev/tools/vt` | VirusTotal indicator lookups (IP / domain / file hash / URL). |
-| `github.com/gollem-dev/tools/abusech` | abuse.ch MalwareBazaar malware sample lookups. |
-| `github.com/gollem-dev/tools/ipdb` | AbuseIPDB IP address reputation / abuse-confidence checks. |
-| `github.com/gollem-dev/tools/shodan` | Shodan host, domain, and search lookups. |
-| `github.com/gollem-dev/tools/whois` | WHOIS registration lookups for domain names and IP addresses. |
-| `github.com/gollem-dev/tools/urlscan` | Submit URLs to urlscan.io and retrieve scan results. |
-| `github.com/gollem-dev/tools/slack` | Search Slack messages via the `search.messages` API. |
-| `github.com/gollem-dev/tools/intune` | Query Microsoft Intune managed devices via the Microsoft Graph API. |
-| `github.com/gollem-dev/tools/github` | GitHub App tools: code search, issue search, file content, commit history, and blame. |
-| `github.com/gollem-dev/tools/bigquery` | Run Google BigQuery queries and inspect datasets, table schemas, and SQL runbooks. |
-| `github.com/gollem-dev/tools/webfetch` | Fetch web pages and extract their text, with optional LLM-based indirect prompt-injection analysis. |
+| Module | Description | Docs |
+|--------|-------------|------|
+| `github.com/gollem-dev/tools/otx` | AlienVault OTX threat-intelligence lookups (IPv4 / IPv6 / domain / hostname / file hash). | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/otx.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/otx) |
+| `github.com/gollem-dev/tools/vt` | VirusTotal indicator lookups (IP / domain / file hash / URL). | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/vt.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/vt) |
+| `github.com/gollem-dev/tools/abusech` | abuse.ch MalwareBazaar malware sample lookups. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/abusech.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/abusech) |
+| `github.com/gollem-dev/tools/ipdb` | AbuseIPDB IP address reputation / abuse-confidence checks. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/ipdb.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/ipdb) |
+| `github.com/gollem-dev/tools/shodan` | Shodan host, domain, and search lookups. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/shodan.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/shodan) |
+| `github.com/gollem-dev/tools/whois` | WHOIS registration lookups for domain names and IP addresses. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/whois.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/whois) |
+| `github.com/gollem-dev/tools/urlscan` | Submit URLs to urlscan.io and retrieve scan results. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/urlscan.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/urlscan) |
+| `github.com/gollem-dev/tools/slack` | Search Slack messages via the `search.messages` API. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/slack.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/slack) |
+| `github.com/gollem-dev/tools/intune` | Query Microsoft Intune managed devices via the Microsoft Graph API. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/intune.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/intune) |
+| `github.com/gollem-dev/tools/github` | GitHub App tools: code search, issue search, file content, commit history, and blame. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/github.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/github) |
+| `github.com/gollem-dev/tools/bigquery` | Run Google BigQuery queries and inspect datasets, table schemas, and SQL runbooks. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/bigquery.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/bigquery) |
+| `github.com/gollem-dev/tools/webfetch` | Fetch web pages and extract their text, with optional LLM-based indirect prompt-injection analysis. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/webfetch.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/webfetch) |
 
 ## Usage
 
