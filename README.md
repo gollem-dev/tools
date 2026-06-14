@@ -20,6 +20,7 @@ own Go module, so you only pull the dependencies of the tools you actually use.
 | `github.com/gollem-dev/tools/github` | GitHub App tools: code search, issue search, file content, commit history, and blame. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/github.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/github) |
 | `github.com/gollem-dev/tools/bigquery` | Run Google BigQuery queries and inspect datasets, table schemas, and SQL runbooks. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/bigquery.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/bigquery) |
 | `github.com/gollem-dev/tools/webfetch` | Fetch web pages and extract their text, with optional LLM-based indirect prompt-injection analysis. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/webfetch.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/webfetch) |
+| `github.com/gollem-dev/tools/notion` | Search Notion pages/databases, read pages as Markdown, and query database rows. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/notion.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/notion) |
 
 ## Usage
 
