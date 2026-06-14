@@ -6,6 +6,7 @@ use (
 	./github
 	./intune
 	./ipdb
+	./notion
 	./otx
 	./shodan
 	./slack

@@ -92,3 +92,11 @@ TEST_BIGQUERY_CREDENTIALS {
 TEST_WEBFETCH_URL      = "https://www.google.com"
 TEST_GEMINI_PROJECT_ID = "your-gcp-project"
 TEST_GEMINI_LOCATION   = "global"
+
+TEST_NOTION_TOKEN {
+  value  = "ntn_xxx"
+  secret = true
+}
+TEST_NOTION_PAGE_ID     = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+TEST_NOTION_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
