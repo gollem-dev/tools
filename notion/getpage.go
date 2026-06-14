@@ -13,8 +13,9 @@ func getPageSpec() gollem.ToolSpec {
 	return gollem.ToolSpec{
 		Name: toolGetPage,
 		Description: "Retrieve a Notion page's full content as Notion-flavored Markdown. " +
-			"The integration must have access to the page. Returns the markdown body and a 'truncated' flag " +
-			"(true when the page exceeds Notion's render limits).",
+			"The integration must have access to the page. Returns the markdown body, a 'truncated' flag " +
+			"(true when the page exceeds Notion's render limits), and 'unknown_block_ids' (the block IDs whose " +
+			"subtrees were omitted when truncated; pass any of them as page_id to fetch the missing subtree).",
 		Parameters: map[string]*gollem.Parameter{
 			"page_id": {
 				Type:        gollem.TypeString,
@@ -29,6 +30,10 @@ func getPageSpec() gollem.ToolSpec {
 type markdownResponse struct {
 	Markdown  string `json:"markdown"`
 	Truncated bool   `json:"truncated"`
+	// UnknownBlockIDs lists the block IDs whose subtrees were omitted when the
+	// page was truncated. Each can be passed back as page_id to fetch the missing
+	// subtree, so callers can recover the full content of large pages.
+	UnknownBlockIDs []string `json:"unknown_block_ids"`
 }
 
 func (t *ToolSet) getPage(ctx context.Context, args map[string]any) (map[string]any, error) {
@@ -47,9 +52,15 @@ func (t *ToolSet) getPage(ctx context.Context, args map[string]any) (map[string]
 		return nil, goerr.Wrap(err, "failed to fetch notion page markdown", goerr.V("page_id", pageID))
 	}
 
+	unknownBlockIDs := resp.UnknownBlockIDs
+	if unknownBlockIDs == nil {
+		unknownBlockIDs = []string{}
+	}
+
 	return map[string]any{
-		"page_id":   pageID,
-		"markdown":  resp.Markdown,
-		"truncated": resp.Truncated,
+		"page_id":           pageID,
+		"markdown":          resp.Markdown,
+		"truncated":         resp.Truncated,
+		"unknown_block_ids": unknownBlockIDs,
 	}, nil
 }

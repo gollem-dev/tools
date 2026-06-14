@@ -13,8 +13,14 @@ github.com/gollem-dev/tools/notion
 | Name | Description |
 |------|-------------|
 | `notion_search` | Search pages and databases shared with the integration by title. |
-| `notion_get_page` | Retrieve a page's full content as Notion-flavored Markdown. |
+| `notion_get_page` | Retrieve a page's full content as Notion-flavored Markdown. Returns `unknown_block_ids` for re-fetching omitted subtrees when truncated. |
 | `notion_query_database` | Query a database's rows with their flattened properties. |
+
+> **Note:** `notion_query_database` uses the legacy database query API
+> (`POST /v1/databases/{id}/query`, Notion-Version `2022-06-28`). Notion has since
+> introduced the `2025-09-03+` data-source model
+> (`POST /v1/data_sources/{id}/query`); databases created under that model may not
+> be addressable by this tool.
 
 ## Usage
 

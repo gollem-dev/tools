@@ -25,7 +25,10 @@ const (
 	defaultBaseURL = "https://api.notion.com"
 
 	// apiVersion is the stable Notion-Version used for the search and database
-	// query endpoints.
+	// query endpoints. The database query endpoint is the legacy
+	// /v1/databases/{id}/query; Notion deprecated it in favour of the
+	// 2025-09-03+ /v1/data_sources/{id}/query model, but the legacy form remains
+	// the broadly compatible choice for read access here.
 	apiVersion = "2022-06-28"
 
 	// markdownAPIVersion is the minimum Notion-Version that exposes the

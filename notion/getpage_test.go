@@ -16,7 +16,7 @@ func TestGetPage(t *testing.T) {
 		gotPath = r.URL.Path
 		gotVersion = r.Header.Get("Notion-Version")
 		gt.String(t, r.Method).Equal(http.MethodGet)
-		_, _ = w.Write([]byte(`{"markdown":"# Title\n\nbody","truncated":true}`))
+		_, _ = w.Write([]byte(`{"markdown":"# Title\n\nbody","truncated":false}`))
 	}))
 	defer srv.Close()
 
@@ -30,7 +30,25 @@ func TestGetPage(t *testing.T) {
 	gt.String(t, gotVersion).Equal("2026-03-11")
 	gt.Value(t, res["page_id"]).Equal("abc-123")
 	gt.Value(t, res["markdown"]).Equal("# Title\n\nbody")
+	gt.Value(t, res["truncated"]).Equal(false)
+	// When not truncated, unknown_block_ids is an empty (non-nil) slice.
+	gt.Value(t, res["unknown_block_ids"]).Equal([]string{})
+}
+
+func TestGetPageTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"markdown":"# Title","truncated":true,"unknown_block_ids":["blk-1","blk-2"]}`))
+	}))
+	defer srv.Close()
+
+	ts := gt.R1(notion.New("tok", notion.WithBaseURL(srv.URL), notion.WithHTTPClient(srv.Client()))).NoError(t)
+
+	res := gt.R1(ts.Run(context.Background(), "notion_get_page", map[string]any{
+		"page_id": "big-page",
+	})).NoError(t)
+
 	gt.Value(t, res["truncated"]).Equal(true)
+	gt.Value(t, res["unknown_block_ids"]).Equal([]string{"blk-1", "blk-2"})
 }
 
 func TestGetPageMissingID(t *testing.T) {

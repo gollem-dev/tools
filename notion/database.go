@@ -15,6 +15,8 @@ func queryDatabaseSpec() gollem.ToolSpec {
 	return gollem.ToolSpec{
 		Name: toolQueryDatabase,
 		Description: "Query the rows (pages) of a Notion database shared with the integration. " +
+			"Uses the legacy database query API (Notion-Version 2022-06-28); databases created under the " +
+			"2025-09-03+ data-source model may not be addressable by this tool. " +
 			"Returns each row's id, title, URL, last edited timestamp, and a flattened map of its " +
 			"properties (title, text, number, select, multi_select, date, checkbox, url, email, phone, etc.).",
 		Parameters: map[string]*gollem.Parameter{
