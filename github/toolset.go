@@ -29,6 +29,23 @@ type ghClient interface {
 	// ListCommits lists commits for a repository.
 	ListCommits(ctx context.Context, owner, repo string, opts *ghlib.CommitsListOptions) ([]*ghlib.RepositoryCommit, *ghlib.Response, error)
 
+	// GetIssue returns a single issue by number. The returned issue also
+	// represents a pull request when issue.IsPullRequest() is true.
+	GetIssue(ctx context.Context, owner, repo string, number int) (*ghlib.Issue, *ghlib.Response, error)
+
+	// ListIssueComments lists comments on an issue or pull request. Pull request
+	// conversation comments are issue comments, so this serves both tools.
+	ListIssueComments(ctx context.Context, owner, repo string, number int, opts *ghlib.IssueListCommentsOptions) ([]*ghlib.IssueComment, *ghlib.Response, error)
+
+	// GetPullRequest returns a single pull request by number.
+	GetPullRequest(ctx context.Context, owner, repo string, number int) (*ghlib.PullRequest, *ghlib.Response, error)
+
+	// ListPullRequestReviews lists reviews on a pull request.
+	ListPullRequestReviews(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.PullRequestReview, *ghlib.Response, error)
+
+	// ListPullRequestFiles lists the changed files of a pull request.
+	ListPullRequestFiles(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.CommitFile, *ghlib.Response, error)
+
 	// DoGraphQL executes a raw HTTP request against the GitHub GraphQL endpoint.
 	// The caller is responsible for marshalling the request body and
 	// unmarshalling the response.
@@ -56,6 +73,26 @@ func (c *defaultGHClient) GetContents(ctx context.Context, owner, repo, path str
 
 func (c *defaultGHClient) ListCommits(ctx context.Context, owner, repo string, opts *ghlib.CommitsListOptions) ([]*ghlib.RepositoryCommit, *ghlib.Response, error) {
 	return c.github.Repositories.ListCommits(ctx, owner, repo, opts)
+}
+
+func (c *defaultGHClient) GetIssue(ctx context.Context, owner, repo string, number int) (*ghlib.Issue, *ghlib.Response, error) {
+	return c.github.Issues.Get(ctx, owner, repo, number)
+}
+
+func (c *defaultGHClient) ListIssueComments(ctx context.Context, owner, repo string, number int, opts *ghlib.IssueListCommentsOptions) ([]*ghlib.IssueComment, *ghlib.Response, error) {
+	return c.github.Issues.ListComments(ctx, owner, repo, number, opts)
+}
+
+func (c *defaultGHClient) GetPullRequest(ctx context.Context, owner, repo string, number int) (*ghlib.PullRequest, *ghlib.Response, error) {
+	return c.github.PullRequests.Get(ctx, owner, repo, number)
+}
+
+func (c *defaultGHClient) ListPullRequestReviews(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.PullRequestReview, *ghlib.Response, error) {
+	return c.github.PullRequests.ListReviews(ctx, owner, repo, number, opts)
+}
+
+func (c *defaultGHClient) ListPullRequestFiles(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.CommitFile, *ghlib.Response, error) {
+	return c.github.PullRequests.ListFiles(ctx, owner, repo, number, opts)
 }
 
 func (c *defaultGHClient) DoGraphQL(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -167,6 +204,7 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 // Specs returns the tool specifications for the five GitHub tools.
 func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 	intPtr := func(v int) *int { return &v }
+	float64Ptr := func(v float64) *float64 { return &v }
 
 	return []gollem.ToolSpec{
 		{
@@ -346,6 +384,67 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 				},
 			},
 		},
+		{
+			Name:        "github_get_issue",
+			Description: "Fetch a single GitHub issue (not a pull request) by number, with full body, labels, and all comments. If the number resolves to a pull request, the call fails — use github_get_pull_request instead.",
+			Parameters: map[string]*gollem.Parameter{
+				"owner": {
+					Type:        gollem.TypeString,
+					Description: "Repository owner (organization or username)",
+					Required:    true,
+					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
+					MinLength:   intPtr(1),
+					MaxLength:   intPtr(39),
+				},
+				"repo": {
+					Type:        gollem.TypeString,
+					Description: "Repository name",
+					Required:    true,
+					Pattern:     "^[a-zA-Z0-9_.-]+$",
+					MinLength:   intPtr(1),
+					MaxLength:   intPtr(100),
+				},
+				"number": {
+					Type:        gollem.TypeInteger,
+					Description: "Issue number (positive integer)",
+					Required:    true,
+					Minimum:     float64Ptr(1),
+				},
+			},
+		},
+		{
+			Name:        "github_get_pull_request",
+			Description: "Fetch a single GitHub pull request by number, with body, labels, all comments, all reviews, and optionally the file diff. Use include_files=true only when the diff is needed; large PRs can return many files.",
+			Parameters: map[string]*gollem.Parameter{
+				"owner": {
+					Type:        gollem.TypeString,
+					Description: "Repository owner (organization or username)",
+					Required:    true,
+					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
+					MinLength:   intPtr(1),
+					MaxLength:   intPtr(39),
+				},
+				"repo": {
+					Type:        gollem.TypeString,
+					Description: "Repository name",
+					Required:    true,
+					Pattern:     "^[a-zA-Z0-9_.-]+$",
+					MinLength:   intPtr(1),
+					MaxLength:   intPtr(100),
+				},
+				"number": {
+					Type:        gollem.TypeInteger,
+					Description: "Pull request number (positive integer)",
+					Required:    true,
+					Minimum:     float64Ptr(1),
+				},
+				"include_files": {
+					Type:        gollem.TypeBoolean,
+					Description: "When true, include changed files with status, additions, deletions, and patch. Defaults to false.",
+					Default:     false,
+				},
+			},
+		},
 	}, nil
 }
 
@@ -362,6 +461,10 @@ func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (ma
 		return t.runListCommits(ctx, args)
 	case "github_get_blame":
 		return t.runGetBlame(ctx, args)
+	case "github_get_issue":
+		return t.runGetIssue(ctx, args)
+	case "github_get_pull_request":
+		return t.runGetPullRequest(ctx, args)
 	default:
 		return nil, goerr.New("unknown tool name", goerr.V("name", name))
 	}

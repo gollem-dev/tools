@@ -94,6 +94,9 @@ func New(userToken string, opts ...Option) (*ToolSet, error) {
 
 // Specs returns the Slack tool specifications.
 func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	intPtr := func(v int) *int { return &v }
+	float64Ptr := func(v float64) *float64 { return &v }
+
 	return []gollem.ToolSpec{
 		{
 			Name:        "slack_message_search",
@@ -126,15 +129,63 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 				},
 			},
 		},
+		{
+			Name: "slack_get_messages",
+			Description: "Fetch one or more Slack messages and their thread context in bulk " +
+				"(max 10 per call). Each target is fetched in parallel; per-target failures " +
+				"are reported in the response without aborting the whole call.",
+			Parameters: map[string]*gollem.Parameter{
+				"targets": {
+					Type:        gollem.TypeArray,
+					Description: "Messages to fetch, each identified by channel_id and ts.",
+					Required:    true,
+					MinItems:    intPtr(1),
+					MaxItems:    intPtr(maxGetMessagesTargets),
+					Items: &gollem.Parameter{
+						Type: gollem.TypeObject,
+						Properties: map[string]*gollem.Parameter{
+							"channel_id": {
+								Type:        gollem.TypeString,
+								Description: "Slack channel ID (e.g., 'C0123ABCD')",
+								Required:    true,
+							},
+							"ts": {
+								Type:        gollem.TypeString,
+								Description: "Message timestamp (e.g., '1700000000.000100')",
+								Required:    true,
+							},
+						},
+					},
+				},
+				"include_thread": {
+					Type:        gollem.TypeBoolean,
+					Description: "If true (default), return the full thread when ts is a thread root; if false, only the message itself.",
+				},
+				"thread_limit": {
+					Type:        gollem.TypeInteger,
+					Description: "Max replies per thread (default: 20, max: 200).",
+					Minimum:     float64Ptr(1),
+					Maximum:     float64Ptr(maxThreadLimit),
+				},
+			},
+		},
 	}, nil
 }
 
 // Run executes the named Slack tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	if name != "slack_message_search" {
+	switch name {
+	case "slack_message_search":
+		return t.runMessageSearch(ctx, args)
+	case "slack_get_messages":
+		return t.runGetMessages(ctx, args)
+	default:
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
+}
 
+// runMessageSearch handles the slack_message_search tool.
+func (t *ToolSet) runMessageSearch(ctx context.Context, args map[string]any) (map[string]any, error) {
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
 		return nil, goerr.New("query is required", goerr.V("args", args))

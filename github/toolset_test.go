@@ -17,11 +17,16 @@ import (
 // fakeClient is a test double for ghClient. Each field is a function that
 // can be set per test to control what the fake returns.
 type fakeClient struct {
-	searchCodeFn   func(ctx context.Context, query string, opts *ghlib.SearchOptions) (*ghlib.CodeSearchResult, *ghlib.Response, error)
-	searchIssuesFn func(ctx context.Context, query string, opts *ghlib.SearchOptions) (*ghlib.IssuesSearchResult, *ghlib.Response, error)
-	getContentsFn  func(ctx context.Context, owner, repo, path string, opts *ghlib.RepositoryContentGetOptions) (*ghlib.RepositoryContent, []*ghlib.RepositoryContent, *ghlib.Response, error)
-	listCommitsFn  func(ctx context.Context, owner, repo string, opts *ghlib.CommitsListOptions) ([]*ghlib.RepositoryCommit, *ghlib.Response, error)
-	doGraphQLFn    func(ctx context.Context, req *http.Request) (*http.Response, error)
+	searchCodeFn        func(ctx context.Context, query string, opts *ghlib.SearchOptions) (*ghlib.CodeSearchResult, *ghlib.Response, error)
+	searchIssuesFn      func(ctx context.Context, query string, opts *ghlib.SearchOptions) (*ghlib.IssuesSearchResult, *ghlib.Response, error)
+	getContentsFn       func(ctx context.Context, owner, repo, path string, opts *ghlib.RepositoryContentGetOptions) (*ghlib.RepositoryContent, []*ghlib.RepositoryContent, *ghlib.Response, error)
+	listCommitsFn       func(ctx context.Context, owner, repo string, opts *ghlib.CommitsListOptions) ([]*ghlib.RepositoryCommit, *ghlib.Response, error)
+	getIssueFn          func(ctx context.Context, owner, repo string, number int) (*ghlib.Issue, *ghlib.Response, error)
+	listIssueCommentsFn func(ctx context.Context, owner, repo string, number int, opts *ghlib.IssueListCommentsOptions) ([]*ghlib.IssueComment, *ghlib.Response, error)
+	getPullRequestFn    func(ctx context.Context, owner, repo string, number int) (*ghlib.PullRequest, *ghlib.Response, error)
+	listReviewsFn       func(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.PullRequestReview, *ghlib.Response, error)
+	listFilesFn         func(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.CommitFile, *ghlib.Response, error)
+	doGraphQLFn         func(ctx context.Context, req *http.Request) (*http.Response, error)
 }
 
 func (f *fakeClient) SearchCode(ctx context.Context, query string, opts *ghlib.SearchOptions) (*ghlib.CodeSearchResult, *ghlib.Response, error) {
@@ -38,6 +43,26 @@ func (f *fakeClient) GetContents(ctx context.Context, owner, repo, path string, 
 
 func (f *fakeClient) ListCommits(ctx context.Context, owner, repo string, opts *ghlib.CommitsListOptions) ([]*ghlib.RepositoryCommit, *ghlib.Response, error) {
 	return f.listCommitsFn(ctx, owner, repo, opts)
+}
+
+func (f *fakeClient) GetIssue(ctx context.Context, owner, repo string, number int) (*ghlib.Issue, *ghlib.Response, error) {
+	return f.getIssueFn(ctx, owner, repo, number)
+}
+
+func (f *fakeClient) ListIssueComments(ctx context.Context, owner, repo string, number int, opts *ghlib.IssueListCommentsOptions) ([]*ghlib.IssueComment, *ghlib.Response, error) {
+	return f.listIssueCommentsFn(ctx, owner, repo, number, opts)
+}
+
+func (f *fakeClient) GetPullRequest(ctx context.Context, owner, repo string, number int) (*ghlib.PullRequest, *ghlib.Response, error) {
+	return f.getPullRequestFn(ctx, owner, repo, number)
+}
+
+func (f *fakeClient) ListPullRequestReviews(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.PullRequestReview, *ghlib.Response, error) {
+	return f.listReviewsFn(ctx, owner, repo, number, opts)
+}
+
+func (f *fakeClient) ListPullRequestFiles(ctx context.Context, owner, repo string, number int, opts *ghlib.ListOptions) ([]*ghlib.CommitFile, *ghlib.Response, error) {
+	return f.listFilesFn(ctx, owner, repo, number, opts)
 }
 
 func (f *fakeClient) DoGraphQL(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -93,7 +118,7 @@ func TestSpecs(t *testing.T) {
 	ts := newFakeToolSet(t, fake)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
-	gt.Array(t, specs).Length(5)
+	gt.Array(t, specs).Length(7)
 
 	names := make([]string, 0, len(specs))
 	for _, s := range specs {
@@ -104,7 +129,9 @@ func TestSpecs(t *testing.T) {
 		Has("github_issue_search").
 		Has("github_get_content").
 		Has("github_list_commits").
-		Has("github_get_blame")
+		Has("github_get_blame").
+		Has("github_get_issue").
+		Has("github_get_pull_request")
 
 	// Verify required parameters exist.
 	specsMap := make(map[string]map[string]bool)
@@ -268,5 +295,48 @@ func TestLive(t *testing.T) {
 		gt.Map(t, result).HasKey("repository")
 		gt.Map(t, result).HasKey("path")
 		gt.Map(t, result).HasKey("ref")
+	})
+
+	t.Run("github_get_issue", func(t *testing.T) {
+		numStr, ok := os.LookupEnv("TEST_GITHUB_ISSUE_NUMBER")
+		if !ok {
+			t.Skip("TEST_GITHUB_ISSUE_NUMBER is not set")
+		}
+		num, err := strconv.Atoi(numStr)
+		gt.NoError(t, err).Required()
+
+		result := gt.R1(ts.Run(context.Background(), "github_get_issue", map[string]any{
+			"owner":  owner,
+			"repo":   repo,
+			"number": float64(num),
+		})).NoError(t)
+
+		gt.Map(t, result).HasKey("number")
+		gt.Map(t, result).HasKey("title")
+		gt.Map(t, result).HasKey("comments")
+		gt.R1(json.Marshal(result)).NoError(t)
+	})
+
+	t.Run("github_get_pull_request", func(t *testing.T) {
+		numStr, ok := os.LookupEnv("TEST_GITHUB_PR_NUMBER")
+		if !ok {
+			t.Skip("TEST_GITHUB_PR_NUMBER is not set")
+		}
+		num, err := strconv.Atoi(numStr)
+		gt.NoError(t, err).Required()
+
+		result := gt.R1(ts.Run(context.Background(), "github_get_pull_request", map[string]any{
+			"owner":         owner,
+			"repo":          repo,
+			"number":        float64(num),
+			"include_files": true,
+		})).NoError(t)
+
+		gt.Map(t, result).HasKey("number")
+		gt.Map(t, result).HasKey("title")
+		gt.Map(t, result).HasKey("comments")
+		gt.Map(t, result).HasKey("reviews")
+		gt.Map(t, result).HasKey("files")
+		gt.R1(json.Marshal(result)).NoError(t)
 	})
 }

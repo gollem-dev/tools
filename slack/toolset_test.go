@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gollem-dev/gollem"
 	"github.com/gollem-dev/tools/slack"
 	"github.com/m-mizutani/gt"
 )
@@ -25,16 +26,28 @@ func TestSpecs(t *testing.T) {
 	ts := gt.R1(slack.New("xoxp-dummy")).NoError(t)
 
 	specs := gt.R1(ts.Specs(context.Background())).NoError(t)
-	gt.Array(t, specs).Length(1)
+	gt.Array(t, specs).Length(2)
 
-	spec := specs[0]
-	gt.String(t, spec.Name).Equal("slack_message_search")
-	gt.Map(t, spec.Parameters).HasKey("query")
-	gt.Map(t, spec.Parameters).HasKey("sort")
-	gt.Map(t, spec.Parameters).HasKey("sort_dir")
-	gt.Map(t, spec.Parameters).HasKey("count")
-	gt.Map(t, spec.Parameters).HasKey("page")
-	gt.Map(t, spec.Parameters).HasKey("highlight")
+	byName := make(map[string]gollem.ToolSpec, len(specs))
+	for _, s := range specs {
+		byName[s.Name] = s
+	}
+
+	search, ok := byName["slack_message_search"]
+	gt.Value(t, ok).Equal(true)
+	gt.Map(t, search.Parameters).HasKey("query")
+	gt.Map(t, search.Parameters).HasKey("sort")
+	gt.Map(t, search.Parameters).HasKey("sort_dir")
+	gt.Map(t, search.Parameters).HasKey("count")
+	gt.Map(t, search.Parameters).HasKey("page")
+	gt.Map(t, search.Parameters).HasKey("highlight")
+
+	get, ok := byName["slack_get_messages"]
+	gt.Value(t, ok).Equal(true)
+	gt.Map(t, get.Parameters).HasKey("targets")
+	gt.Map(t, get.Parameters).HasKey("include_thread")
+	gt.Map(t, get.Parameters).HasKey("thread_limit")
+	gt.Value(t, get.Parameters["targets"].Required).Equal(true)
 }
 
 // TestRunInvalidName verifies that Run returns an error for unknown tool names.
@@ -262,5 +275,42 @@ func TestLive(t *testing.T) {
 	gt.Map(t, result).HasKey("messages")
 
 	// Verify the payload round-trips to JSON without error.
+	_ = gt.R1(json.Marshal(result)).NoError(t)
+}
+
+// TestLiveGetMessages hits the real Slack API for slack_get_messages. It runs
+// only when TEST_SLACK_USER_TOKEN, TEST_SLACK_CHANNEL_ID, and TEST_SLACK_TS are
+// set. The token must be a user token (xoxp-…).
+func TestLiveGetMessages(t *testing.T) {
+	token, ok := os.LookupEnv("TEST_SLACK_USER_TOKEN")
+	if !ok {
+		t.Skip("TEST_SLACK_USER_TOKEN is not set")
+	}
+	channelID, ok := os.LookupEnv("TEST_SLACK_CHANNEL_ID")
+	if !ok {
+		t.Skip("TEST_SLACK_CHANNEL_ID is not set")
+	}
+	messageTS, ok := os.LookupEnv("TEST_SLACK_TS")
+	if !ok {
+		t.Skip("TEST_SLACK_TS is not set")
+	}
+
+	ts := gt.R1(slack.New(token)).NoError(t)
+	gt.NoError(t, ts.Ping(context.Background())).Required()
+
+	result := gt.R1(ts.Run(context.Background(), "slack_get_messages", map[string]any{
+		"targets": []any{
+			map[string]any{"channel_id": channelID, "ts": messageTS},
+		},
+	})).NoError(t)
+
+	results := result["results"].([]any)
+	gt.Array(t, results).Length(1)
+	first := results[0].(map[string]any)
+	gt.Value(t, first["channel_id"]).Equal(channelID)
+	_, hasErr := first["error"]
+	gt.Value(t, hasErr).Equal(false)
+	gt.Map(t, first).HasKey("messages")
+
 	_ = gt.R1(json.Marshal(result)).NoError(t)
 }
