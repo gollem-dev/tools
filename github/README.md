@@ -1,8 +1,8 @@
 # github
 
-GitHub App tools — code search, issue search, file content, commit history, and
-blame — for the [gollem](https://github.com/gollem-dev/gollem) LLM agent
-framework.
+GitHub App tools — code search, issue search, file content, commit history,
+blame, and single issue/PR retrieval — for the
+[gollem](https://github.com/gollem-dev/gollem) LLM agent framework.
 
 ```
 github.com/gollem-dev/tools/github
@@ -17,6 +17,8 @@ github.com/gollem-dev/tools/github
 | `github_get_content` | Get file content from a repository. |
 | `github_list_commits` | List commits for a repository. |
 | `github_get_blame` | Get git blame information for a file. |
+| `github_get_issue` | Fetch a single issue with body, labels, and all comments. |
+| `github_get_pull_request` | Fetch a single PR with body, labels, comments, reviews, and optionally the file diff. |
 
 ## Usage
 
@@ -49,3 +51,7 @@ TEST_GITHUB_APP_ID=... TEST_GITHUB_APP_INSTALLATION_ID=... \
 	TEST_GITHUB_APP_PRIVATE_KEY="$(cat key.pem)" \
 	TEST_GITHUB_REPO=owner/repo go test ./...
 ```
+
+The `github_get_issue` and `github_get_pull_request` live subtests additionally
+require `TEST_GITHUB_ISSUE_NUMBER` and `TEST_GITHUB_PR_NUMBER` respectively;
+each subtest skips when its variable is unset.

@@ -46,6 +46,69 @@ type CommitResult struct {
 	HTMLURL string    `json:"html_url"`
 }
 
+// IssueComment represents a single comment on an issue or pull request.
+type IssueComment struct {
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	URL       string    `json:"url"`
+}
+
+// IssueDetailResult represents a single issue fetched with full body and comments.
+type IssueDetailResult struct {
+	Number    int            `json:"number"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	Author    string         `json:"author"`
+	State     string         `json:"state"`
+	URL       string         `json:"url"`
+	Labels    []string       `json:"labels"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	ClosedAt  *time.Time     `json:"closed_at,omitempty"`
+	Comments  []IssueComment `json:"comments"`
+}
+
+// PullRequestReview represents a single review on a pull request.
+type PullRequestReview struct {
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	State     string    `json:"state"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PullRequestFile represents a single changed file in a pull request.
+type PullRequestFile struct {
+	Path           string `json:"path"`
+	Status         string `json:"status"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	Patch          string `json:"patch"`
+	PatchTruncated bool   `json:"patch_truncated"`
+}
+
+// PullRequestDetailResult represents a single pull request fetched with body,
+// comments, reviews, and optionally the file diff.
+type PullRequestDetailResult struct {
+	Number    int                 `json:"number"`
+	Title     string              `json:"title"`
+	Body      string              `json:"body"`
+	Author    string              `json:"author"`
+	State     string              `json:"state"`
+	URL       string              `json:"url"`
+	Labels    []string            `json:"labels"`
+	Merged    bool                `json:"merged"`
+	Draft     bool                `json:"draft"`
+	BaseRef   string              `json:"base_ref"`
+	HeadRef   string              `json:"head_ref"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+	ClosedAt  *time.Time          `json:"closed_at,omitempty"`
+	Comments  []IssueComment      `json:"comments"`
+	Reviews   []PullRequestReview `json:"reviews"`
+	Files     []PullRequestFile   `json:"files,omitempty"`
+}
+
 // BlameRange represents a contiguous set of lines attributed to a single commit.
 type BlameRange struct {
 	StartLine     int       `json:"start_line"`

@@ -32,6 +32,7 @@ type ToolSet struct {
 	logger          *slog.Logger
 	llmClient       gollem.LLMClient
 	maxContentBytes int64
+	allowPrivateIP  bool
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -41,11 +42,27 @@ type Option func(*ToolSet)
 
 // WithHTTPClient overrides the HTTP client used for requests. A nil value is
 // ignored and the default client is kept.
+//
+// An injected client carries its own transport, so the built-in SSRF guard
+// (see WithAllowPrivateIP) is NOT installed on it. Supplying a client is the
+// documented escape hatch for callers that need full control over dialing.
 func WithHTTPClient(client *http.Client) Option {
 	return func(t *ToolSet) {
 		if client != nil {
 			t.client = client
 		}
+	}
+}
+
+// WithAllowPrivateIP controls the SSRF guard on the default HTTP client. The
+// guard is enabled by default (allow == false): connections to non-public IPs
+// (loopback, RFC1918/ULA private ranges, CGNAT, link-local metadata endpoints,
+// etc.) are rejected at dial time on every redirect hop. Pass true to disable
+// it, e.g. to reach a loopback test server. This has no effect when a client is
+// injected via WithHTTPClient.
+func WithAllowPrivateIP(allow bool) Option {
+	return func(t *ToolSet) {
+		t.allowPrivateIP = allow
 	}
 }
 
@@ -84,12 +101,17 @@ func WithMaxContentBytes(n int64) Option {
 // is performed.  Use Ping to verify connectivity.
 func New(opts ...Option) (*ToolSet, error) {
 	t := &ToolSet{
-		client:          &http.Client{Timeout: defaultTimeout},
 		logger:          slog.Default(),
 		maxContentBytes: defaultMaxContentBytes,
 	}
 	for _, opt := range opts {
 		opt(t)
+	}
+	// Build the guarded default client only when the caller did not inject one
+	// via WithHTTPClient. allowPrivateIP is read here, after options are applied,
+	// so the guard reflects the final configuration.
+	if t.client == nil {
+		t.client = newGuardedClient(t.allowPrivateIP)
 	}
 	return t, nil
 }

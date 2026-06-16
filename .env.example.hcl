@@ -53,6 +53,9 @@ TEST_SLACK_USER_TOKEN {
   secret = true
 }
 TEST_SLACK_QUERY = "incident"
+# Optional: enables the slack_get_messages live test (a channel ID + message ts).
+TEST_SLACK_CHANNEL_ID = "C0123ABCD"
+TEST_SLACK_TS         = "1700000000.000100"
 
 # --- intune (Microsoft Graph / Azure AD app) ---
 TEST_INTUNE_TENANT_ID = "00000000-0000-0000-0000-000000000000"
@@ -73,6 +76,9 @@ TEST_GITHUB_APP_PRIVATE_KEY {
   secret = true
 }
 TEST_GITHUB_REPO = "owner/repo"
+# Optional: enable the github_get_issue / github_get_pull_request live subtests.
+TEST_GITHUB_ISSUE_NUMBER = "1"
+TEST_GITHUB_PR_NUMBER    = "2"
 
 # --- bigquery (only PROJECT_ID is required to enable the live test) ---
 TEST_BIGQUERY_PROJECT_ID    = "your-gcp-project"
