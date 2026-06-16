@@ -21,7 +21,12 @@ const (
 	maxGetMessagesTargets = 10
 
 	// defaultThreadLimit / maxThreadLimit bound the replies fetched per thread.
-	defaultThreadLimit = 20
+	// Slack reduced conversations.replies' default and maximum limit to 15 for
+	// apps newly distributed outside the Marketplace as of 2025-05-29, so the
+	// default is kept at 15 to work on both old (max 1000) and new tiers. The
+	// ceiling is left higher for apps still on the legacy tier; callers that
+	// request more than their tier allows get a visible per-target error.
+	defaultThreadLimit = 15
 	maxThreadLimit     = 200
 )
 

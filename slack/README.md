@@ -26,10 +26,22 @@ if err := ts.Ping(ctx); err != nil { // optional preflight
 }
 ```
 
-`search.messages` is only available with a **user** token (`xoxp-...`) carrying
-the `search:read` scope; bot tokens cannot call it. `slack_get_messages` calls
-`conversations.replies` / `chat.getPermalink`; a user token can read public
-channels even when no bot has joined them.
+Both tools require a **user** token (`xoxp-...`); bot tokens cannot call
+`search.messages`. Required scopes per tool:
+
+| Tool | Scopes |
+|------|--------|
+| `slack_message_search` | `search:read` |
+| `slack_get_messages` | `conversations.replies` needs the relevant `*:history` read scopes for the conversations you fetch — `channels:history` (public), `groups:history` (private), `im:history` (DMs), `mpim:history` (group DMs). `chat.getPermalink` needs no extra scope. |
+
+A user token can read public channels via `conversations.replies` even when no
+bot has joined them. Missing a `*:history` scope surfaces as a `missing_scope`
+error in that target's result.
+
+> **Note:** As of 2025-05-29, Slack reduced `conversations.replies` to a default
+> and maximum `limit` of **15** (and 1 request/minute) for apps newly distributed
+> outside the Marketplace. `slack_get_messages` defaults `thread_limit` to 15 so
+> it works on both the legacy and the new tier.
 
 ## Options
 

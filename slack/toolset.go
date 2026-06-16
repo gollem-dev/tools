@@ -163,7 +163,7 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 				},
 				"thread_limit": {
 					Type:        gollem.TypeInteger,
-					Description: "Max replies per thread (default: 20, max: 200).",
+					Description: "Max replies per thread (default: 15). Slack caps conversations.replies at 15 for apps newly distributed outside the Marketplace (since 2025-05-29); legacy/Marketplace apps allow more, up to this tool's ceiling of 200.",
 					Minimum:     float64Ptr(1),
 					Maximum:     float64Ptr(maxThreadLimit),
 				},
