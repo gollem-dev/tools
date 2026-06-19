@@ -1,4 +1,4 @@
-module github.com/gollem-dev/tools/slack
+module github.com/gollem-dev/tools/falcon
 
 go 1.26.4
 
@@ -6,7 +6,6 @@ require (
 	github.com/gollem-dev/gollem v0.26.0
 	github.com/m-mizutani/goerr/v2 v2.0.1
 	github.com/m-mizutani/gt v0.2.1
-	golang.org/x/sync v0.21.0
 )
 
 require (
