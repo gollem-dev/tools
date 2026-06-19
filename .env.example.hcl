@@ -100,3 +100,9 @@ TEST_NOTION_TOKEN {
 TEST_NOTION_PAGE_ID     = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 TEST_NOTION_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
+# --- jira
+TEST_JIRA_BASE_URL { value = "https://your-domain.atlassian.net" }
+TEST_JIRA_EMAIL    { value = "you@example.com" }
+TEST_JIRA_API_TOKEN { value = "your-api-token"; secret = true }
+TEST_JIRA_PROJECT  { value = "PROJ" }
+TEST_JIRA_ISSUE_KEY { value = "PROJ-1" }

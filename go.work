@@ -6,6 +6,7 @@ use (
 	./github
 	./intune
 	./ipdb
+	./jira
 	./notion
 	./otx
 	./shodan
