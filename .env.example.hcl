@@ -106,3 +106,14 @@ TEST_NOTION_TOKEN {
 TEST_NOTION_PAGE_ID     = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 TEST_NOTION_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
+
+# falcon: CrowdStrike Falcon (live test for github.com/gollem-dev/tools/falcon)
+TEST_FALCON_CLIENT_ID { value = "your-client-id"; secret = true }
+TEST_FALCON_CLIENT_SECRET { value = "your-client-secret"; secret = true }
+# Optional: cloud-region API base URL (defaults to US-1 https://api.crowdstrike.com)
+TEST_FALCON_BASE_URL = "https://api.crowdstrike.com"
+# Optional: set to enable Incidents-scope live tests (incidents/behaviors/crowdscores).
+# Leave unset if the API client lacks the CrowdStrike Incidents:Read scope.
+TEST_FALCON_INCIDENTS_SCOPE = "1"
+# Optional: a CQL query to enable the Next-Gen SIEM event-search live test.
+TEST_FALCON_EVENTS_QUERY = "#event_simpleName=ProcessRollup2 | head(5)"
