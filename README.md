@@ -22,6 +22,7 @@ own Go module, so you only pull the dependencies of the tools you actually use.
 | `github.com/gollem-dev/tools/webfetch` | Fetch web pages and extract their text (SSRF-guarded), with optional LLM-based indirect prompt-injection analysis. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/webfetch.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/webfetch) |
 | `github.com/gollem-dev/tools/notion` | Search Notion pages/databases, read pages as Markdown, and query database rows. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/notion.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/notion) |
 | `github.com/gollem-dev/tools/falcon` | Read-only CrowdStrike Falcon queries (incidents, alerts, behaviors, devices, CrowdScores, EDR events) with in-memory pagination to bound result size. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/falcon.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/falcon) |
+| `github.com/gollem-dev/tools/jira` | Read-only Jira Cloud: list projects, search issues with JQL, and fetch issue content as Markdown. | [![Go Reference](https://pkg.go.dev/badge/github.com/gollem-dev/tools/jira.svg)](https://pkg.go.dev/github.com/gollem-dev/tools/jira) |
 
 ## Usage
 

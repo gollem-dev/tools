@@ -106,6 +106,12 @@ TEST_NOTION_TOKEN {
 TEST_NOTION_PAGE_ID     = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 TEST_NOTION_DATABASE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
+# --- jira
+TEST_JIRA_BASE_URL { value = "https://your-domain.atlassian.net" }
+TEST_JIRA_EMAIL    { value = "you@example.com" }
+TEST_JIRA_API_TOKEN { value = "your-api-token"; secret = true }
+TEST_JIRA_PROJECT  { value = "PROJ" }
+TEST_JIRA_ISSUE_KEY { value = "PROJ-1" }
 
 # falcon: CrowdStrike Falcon (live test for github.com/gollem-dev/tools/falcon)
 TEST_FALCON_CLIENT_ID { value = "your-client-id"; secret = true }
