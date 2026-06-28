@@ -24,6 +24,14 @@ type ToolSet struct {
 	baseURL string
 	client  *http.Client
 	logger  *slog.Logger
+	tools   []gollem.Tool
+}
+
+// hashInput is the typed argument for the MalwareBazaar query tool. The schema
+// is inferred from this struct by gollem.NewTool, eliminating the hand-written
+// parameter map and the args["hash"].(string) assertion in Run.
+type hashInput struct {
+	Hash string `json:"hash" description:"The hash value (MD5, SHA1, or SHA256) to query" required:"true"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -78,38 +86,52 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build abusech tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Specs returns the MalwareBazaar tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "abusech.bazaar.query",
-			Description: "Query malware information from MalwareBazaar by file hash value.",
-			Parameters: map[string]*gollem.Parameter{
-				"hash": {
-					Type:        gollem.TypeString,
-					Description: "The hash value (MD5, SHA1, or SHA256) to query",
-					Required:    true,
-				},
-			},
+// buildTools constructs the typed MalwareBazaar lookup tool using gollem.NewTool.
+// The schema is derived from hashInput, making it the single source of truth for
+// both the spec and the runtime argument decode.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	tool, err := gollem.NewTool(
+		"abusech.bazaar.query",
+		"Query malware information from MalwareBazaar by file hash value.",
+		func(ctx context.Context, in hashInput) (map[string]any, error) {
+			if in.Hash == "" {
+				return nil, goerr.New("hash is required")
+			}
+			return t.query(ctx, in.Hash)
 		},
-	}, nil
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "abusech.bazaar.query"))
+	}
+	return []gollem.Tool{tool}, nil
 }
 
-// Run executes the named MalwareBazaar lookup.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "abusech.bazaar.query":
-		hash, ok := args["hash"].(string)
-		if !ok || hash == "" {
-			return nil, goerr.New("hash is required", goerr.V("name", name), goerr.V("args", args))
-		}
-		return t.query(ctx, hash)
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+// Specs returns the MalwareBazaar tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
 	}
+	return specs, nil
+}
+
+// Run executes the named MalwareBazaar lookup by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
+	}
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by querying a well-known SHA256

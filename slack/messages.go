@@ -30,48 +30,56 @@ const (
 	maxThreadLimit     = 200
 )
 
+// messageTargetInput identifies one message by channel and timestamp.
+// It is the element type of getMessagesInput.Targets.
+type messageTargetInput struct {
+	ChannelID string `json:"channel_id" description:"Slack channel ID (e.g., 'C0123ABCD')" required:"true"`
+	TS        string `json:"ts" description:"Message timestamp (e.g., '1700000000.000100')" required:"true"`
+}
+
+// getMessagesInput is the typed argument for slack_get_messages. The schema is
+// inferred from this struct, eliminating the hand-written parameter map.
+type getMessagesInput struct {
+	Targets       []messageTargetInput `json:"targets" description:"Messages to fetch, each identified by channel_id and ts." required:"true" minItems:"1" maxItems:"10"`
+	IncludeThread *bool                `json:"include_thread" description:"If true (default), return the full thread when ts is a thread root; if false, only the message itself."`
+	ThreadLimit   int                  `json:"thread_limit" description:"Max replies per thread (default: 15). Slack caps conversations.replies at 15 for apps newly distributed outside the Marketplace (since 2025-05-29); legacy/Marketplace apps allow more, up to this tool's ceiling of 200." min:"1" max:"200"`
+}
+
 // messageTarget identifies one message to fetch by channel and timestamp.
 type messageTarget struct {
 	ChannelID string
 	TS        string
 }
 
-// runGetMessages fetches one or more Slack messages (and optionally their
-// thread context) in parallel. Per-target failures are reported in the response
+// getMessages fetches one or more Slack messages (and optionally their thread
+// context) in parallel. Per-target failures are reported in the response
 // without aborting the whole call; the call fails only when every target fails.
-func (t *ToolSet) runGetMessages(ctx context.Context, args map[string]any) (map[string]any, error) {
-	rawTargets, ok := args["targets"].([]any)
-	if !ok || len(rawTargets) == 0 {
-		return nil, goerr.New("targets is required and must be a non-empty array", goerr.V("args", args))
+func (t *ToolSet) getMessages(ctx context.Context, in getMessagesInput) (map[string]any, error) {
+	if len(in.Targets) == 0 {
+		return nil, goerr.New("targets is required and must be a non-empty array", goerr.V("args", in))
 	}
-	if len(rawTargets) > maxGetMessagesTargets {
+	if len(in.Targets) > maxGetMessagesTargets {
 		return nil, goerr.New("too many targets",
-			goerr.V("count", len(rawTargets)), goerr.V("max", maxGetMessagesTargets))
+			goerr.V("count", len(in.Targets)), goerr.V("max", maxGetMessagesTargets))
 	}
 
-	targets := make([]messageTarget, 0, len(rawTargets))
-	for i, rt := range rawTargets {
-		obj, ok := rt.(map[string]any)
-		if !ok {
-			return nil, goerr.New("each target must be an object", goerr.V("index", i))
-		}
-		channelID, _ := obj["channel_id"].(string)
-		ts, _ := obj["ts"].(string)
-		if channelID == "" || ts == "" {
+	targets := make([]messageTarget, 0, len(in.Targets))
+	for i, tgt := range in.Targets {
+		if tgt.ChannelID == "" || tgt.TS == "" {
 			return nil, goerr.New("each target requires channel_id and ts",
-				goerr.V("index", i), goerr.V("target", obj))
+				goerr.V("index", i), goerr.V("target", tgt))
 		}
-		targets = append(targets, messageTarget{ChannelID: channelID, TS: ts})
+		targets = append(targets, messageTarget(tgt))
 	}
 
 	includeThread := true
-	if v, ok := args["include_thread"].(bool); ok {
-		includeThread = v
+	if in.IncludeThread != nil {
+		includeThread = *in.IncludeThread
 	}
 
 	threadLimit := defaultThreadLimit
-	if v, ok := args["thread_limit"].(float64); ok && v > 0 {
-		threadLimit = int(v)
+	if in.ThreadLimit > 0 {
+		threadLimit = in.ThreadLimit
 	}
 	if threadLimit > maxThreadLimit {
 		threadLimit = maxThreadLimit

@@ -23,6 +23,14 @@ type ToolSet struct {
 	baseURL string
 	client  *http.Client
 	logger  *slog.Logger
+	tools   []gollem.Tool
+}
+
+// targetInput is the typed argument shared by every OTX lookup tool. The schema
+// (and the runtime decode) is inferred from this struct, so there is no separate
+// hand-written parameter map to drift from the Run implementation.
+type targetInput struct {
+	Target string `json:"target" description:"The indicator value to search (IPv4/IPv6/domain/hostname/file hash, depending on the tool)" required:"true"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -77,51 +85,63 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build OTX tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// indicatorTypes maps each tool name to the OTX indicator type path segment.
-var indicatorTypes = map[string]string{
-	"otx_ipv4":      "IPv4",
-	"otx_ipv6":      "IPv6",
-	"otx_domain":    "domain",
-	"otx_hostname":  "hostname",
-	"otx_file_hash": "file",
+// buildTools constructs the typed OTX lookup tools. Each tool shares targetInput
+// but binds a distinct OTX indicator path segment, captured per closure.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	defs := []struct {
+		name, desc, indicator string
+	}{
+		{"otx_ipv4", "Search the indicator of IPv4 from OTX.", "IPv4"},
+		{"otx_domain", "Search the indicator of domain from OTX.", "domain"},
+		{"otx_ipv6", "Search the indicator of IPv6 from OTX.", "IPv6"},
+		{"otx_hostname", "Search the indicator of hostname from OTX.", "hostname"},
+		{"otx_file_hash", "Search the indicator of file hash from OTX.", "file"},
+	}
+
+	tools := make([]gollem.Tool, 0, len(defs))
+	for _, d := range defs {
+		indicator := d.indicator
+		tool, err := gollem.NewTool(d.name, d.desc,
+			func(ctx context.Context, in targetInput) (map[string]any, error) {
+				if in.Target == "" {
+					return nil, goerr.New("target is required", goerr.V("indicator", indicator))
+				}
+				return t.query(ctx, indicator, in.Target)
+			})
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", d.name))
+		}
+		tools = append(tools, tool)
+	}
+	return tools, nil
 }
 
-// Specs returns the OTX tool specifications.
+// Specs returns the OTX tool specifications, derived from the typed tools.
 func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	target := func(desc string) map[string]*gollem.Parameter {
-		return map[string]*gollem.Parameter{
-			"target": {
-				Type:        gollem.TypeString,
-				Description: desc,
-				Required:    true,
-			},
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named OTX lookup by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
 		}
 	}
-	return []gollem.ToolSpec{
-		{Name: "otx_ipv4", Description: "Search the indicator of IPv4 from OTX.", Parameters: target("The IPv4 address to search")},
-		{Name: "otx_domain", Description: "Search the indicator of domain from OTX.", Parameters: target("The domain to search")},
-		{Name: "otx_ipv6", Description: "Search the indicator of IPv6 from OTX.", Parameters: target("The IPv6 address to search")},
-		{Name: "otx_hostname", Description: "Search the indicator of hostname from OTX.", Parameters: target("The hostname to search")},
-		{Name: "otx_file_hash", Description: "Search the indicator of file hash from OTX.", Parameters: target("The file hash to search")},
-	}, nil
-}
-
-// Run executes the named OTX lookup.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	indicatorType, ok := indicatorTypes[name]
-	if !ok {
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
-	}
-
-	indicator, ok := args["target"].(string)
-	if !ok || indicator == "" {
-		return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-	}
-
-	return t.query(ctx, indicatorType, indicator)
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by querying a well-known IPv4

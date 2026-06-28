@@ -40,6 +40,13 @@ const (
 	httpTimeout = 30 * time.Second
 )
 
+// Tool names exposed by this ToolSet.
+const (
+	toolSearch        = "notion_search"
+	toolGetPage       = "notion_get_page"
+	toolQueryDatabase = "notion_query_database"
+)
+
 // ToolSet implements gollem.ToolSet for reading from Notion. Fields are
 // unexported; configure via Option.
 type ToolSet struct {
@@ -47,6 +54,7 @@ type ToolSet struct {
 	baseURL string
 	client  *http.Client
 	logger  *slog.Logger
+	tools   []gollem.Tool
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -102,37 +110,73 @@ func New(token string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build Notion tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Tool names exposed by this ToolSet.
-const (
-	toolSearch        = "notion_search"
-	toolGetPage       = "notion_get_page"
-	toolQueryDatabase = "notion_query_database"
-)
+// buildTools constructs the typed Notion tools. Each tool has its own input
+// struct because their argument shapes differ.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	searchTool, err := gollem.NewTool(
+		toolSearch,
+		"Search Notion pages and databases shared with the integration. "+
+			"Matches titles against the query string. Returns id, type (page or database), title, URL, and last edited timestamp.",
+		t.runSearch,
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build search tool", goerr.V("name", toolSearch))
+	}
+
+	getPageTool, err := gollem.NewTool(
+		toolGetPage,
+		"Retrieve a Notion page's full content as Notion-flavored Markdown. "+
+			"The integration must have access to the page. Returns the markdown body, a 'truncated' flag "+
+			"(true when the page exceeds Notion's render limits), and 'unknown_block_ids' (the block IDs whose "+
+			"subtrees were omitted when truncated; pass any of them as page_id to fetch the missing subtree).",
+		t.runGetPage,
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build get-page tool", goerr.V("name", toolGetPage))
+	}
+
+	queryDatabaseTool, err := gollem.NewTool(
+		toolQueryDatabase,
+		"Query the rows (pages) of a Notion database shared with the integration. "+
+			"Uses the legacy database query API (Notion-Version 2022-06-28); databases created under the "+
+			"2025-09-03+ data-source model may not be addressable by this tool. "+
+			"Returns each row's id, title, URL, last edited timestamp, and a flattened map of its "+
+			"properties (title, text, number, select, multi_select, date, checkbox, url, email, phone, etc.).",
+		t.runQueryDatabase,
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build query-database tool", goerr.V("name", toolQueryDatabase))
+	}
+
+	return []gollem.Tool{searchTool, getPageTool, queryDatabaseTool}, nil
+}
 
 // Specs returns the Notion tool specifications.
 func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		searchSpec(),
-		getPageSpec(),
-		queryDatabaseSpec(),
-	}, nil
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
 }
 
 // Run dispatches to the named Notion tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case toolSearch:
-		return t.search(ctx, args)
-	case toolGetPage:
-		return t.getPage(ctx, args)
-	case toolQueryDatabase:
-		return t.queryDatabase(ctx, args)
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
 	}
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by issuing a minimal search.

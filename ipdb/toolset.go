@@ -24,6 +24,15 @@ type ToolSet struct {
 	baseURL string
 	client  *http.Client
 	logger  *slog.Logger
+	tools   []gollem.Tool
+}
+
+// checkInput is the typed argument for the ipdb_check tool. The schema is
+// inferred from this struct by gollem.NewTool, so it is the single source of
+// truth — no separate hand-written parameter map is needed.
+type checkInput struct {
+	Target       string `json:"target" description:"The IP address to check" required:"true"`
+	MaxAgeInDays int    `json:"maxAgeInDays" description:"The maximum age of reports in days (1-365)"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -79,55 +88,59 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build ipdb tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Specs returns the AbuseIPDB tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "ipdb_check",
-			Description: "Check IP address information from AbuseIPDB.",
-			Parameters: map[string]*gollem.Parameter{
-				"target": {
-					Type:        gollem.TypeString,
-					Description: "The IP address to check",
-					Required:    true,
-				},
-				"maxAgeInDays": {
-					Type:        gollem.TypeInteger,
-					Description: "The maximum age of reports in days (1-365)",
-				},
-			},
-		},
-	}, nil
+// buildTools constructs the typed AbuseIPDB lookup tool.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	tool, err := gollem.NewTool("ipdb_check", "Check IP address information from AbuseIPDB.",
+		func(ctx context.Context, in checkInput) (map[string]any, error) {
+			if in.Target == "" {
+				return nil, goerr.New("target is required", goerr.V("args", in))
+			}
+			return t.check(ctx, in.Target, in.MaxAgeInDays)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build ipdb_check tool")
+	}
+	return []gollem.Tool{tool}, nil
 }
 
-// Run executes the named AbuseIPDB lookup.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "ipdb_check":
-		return t.check(ctx, args)
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+// Specs returns the AbuseIPDB tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
 	}
+	return specs, nil
+}
+
+// Run executes the named AbuseIPDB lookup by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
+	}
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by querying a well-known IP
 // address.
 func (t *ToolSet) Ping(ctx context.Context) error {
-	if _, err := t.check(ctx, map[string]any{"target": "8.8.8.8"}); err != nil {
+	if _, err := t.check(ctx, "8.8.8.8", 0); err != nil {
 		return goerr.Wrap(err, "AbuseIPDB ping failed")
 	}
 	return nil
 }
 
-func (t *ToolSet) check(ctx context.Context, args map[string]any) (map[string]any, error) {
-	ipAddress, ok := args["target"].(string)
-	if !ok || ipAddress == "" {
-		return nil, goerr.New("target is required", goerr.V("args", args))
-	}
-
+func (t *ToolSet) check(ctx context.Context, ipAddress string, maxAgeInDays int) (map[string]any, error) {
 	endpoint := t.baseURL + "/check"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -137,12 +150,8 @@ func (t *ToolSet) check(ctx context.Context, args map[string]any) (map[string]an
 	// Build query parameters.
 	q := req.URL.Query()
 	q.Add("ipAddress", ipAddress)
-	if maxAge, ok := args["maxAgeInDays"].(float64); ok {
-		q.Add("maxAgeInDays", fmt.Sprintf("%d", int(maxAge)))
-	} else if args["maxAgeInDays"] != nil {
-		return nil, goerr.New("invalid maxAgeInDays parameter type",
-			goerr.V("type", fmt.Sprintf("%T", args["maxAgeInDays"])),
-			goerr.V("value", args["maxAgeInDays"]))
+	if maxAgeInDays != 0 {
+		q.Add("maxAgeInDays", fmt.Sprintf("%d", maxAgeInDays))
 	}
 	req.URL.RawQuery = q.Encode()
 

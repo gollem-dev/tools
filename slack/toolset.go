@@ -5,7 +5,6 @@ package slack
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -35,6 +34,7 @@ type ToolSet struct {
 	client    *http.Client
 	logger    *slog.Logger
 	retryWait time.Duration
+	tools     []gollem.Tool
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -89,136 +89,94 @@ func New(userToken string, opts ...Option) (*ToolSet, error) {
 		opt(t)
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build Slack tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Specs returns the Slack tool specifications.
-func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	intPtr := func(v int) *int { return &v }
-	float64Ptr := func(v float64) *float64 { return &v }
-
-	return []gollem.ToolSpec{
-		{
-			Name:        "slack_message_search",
-			Description: "Search for messages in Slack workspace using the search.messages API",
-			Parameters: map[string]*gollem.Parameter{
-				"query": {
-					Type:        gollem.TypeString,
-					Description: "The search query (e.g., 'from:@user', 'in:general', 'has:link')",
-					Required:    true,
-				},
-				"sort": {
-					Type:        gollem.TypeString,
-					Description: "Sort order: 'score' (relevance) or 'timestamp' (newest first)",
-				},
-				"sort_dir": {
-					Type:        gollem.TypeString,
-					Description: "Sort direction: 'asc' or 'desc'",
-				},
-				"count": {
-					Type:        gollem.TypeNumber,
-					Description: "Number of results to return (default: 20, max: 100)",
-				},
-				"page": {
-					Type:        gollem.TypeNumber,
-					Description: "Page number for pagination (default: 1)",
-				},
-				"highlight": {
-					Type:        gollem.TypeBoolean,
-					Description: "Enable highlighting of search terms in results",
-				},
-			},
-		},
-		{
-			Name: "slack_get_messages",
-			Description: "Fetch one or more Slack messages and their thread context in bulk " +
-				"(max 10 per call). Each target is fetched in parallel; per-target failures " +
-				"are reported in the response without aborting the whole call.",
-			Parameters: map[string]*gollem.Parameter{
-				"targets": {
-					Type:        gollem.TypeArray,
-					Description: "Messages to fetch, each identified by channel_id and ts.",
-					Required:    true,
-					MinItems:    intPtr(1),
-					MaxItems:    intPtr(maxGetMessagesTargets),
-					Items: &gollem.Parameter{
-						Type: gollem.TypeObject,
-						Properties: map[string]*gollem.Parameter{
-							"channel_id": {
-								Type:        gollem.TypeString,
-								Description: "Slack channel ID (e.g., 'C0123ABCD')",
-								Required:    true,
-							},
-							"ts": {
-								Type:        gollem.TypeString,
-								Description: "Message timestamp (e.g., '1700000000.000100')",
-								Required:    true,
-							},
-						},
-					},
-				},
-				"include_thread": {
-					Type:        gollem.TypeBoolean,
-					Description: "If true (default), return the full thread when ts is a thread root; if false, only the message itself.",
-				},
-				"thread_limit": {
-					Type:        gollem.TypeInteger,
-					Description: "Max replies per thread (default: 15). Slack caps conversations.replies at 15 for apps newly distributed outside the Marketplace (since 2025-05-29); legacy/Marketplace apps allow more, up to this tool's ceiling of 200.",
-					Minimum:     float64Ptr(1),
-					Maximum:     float64Ptr(maxThreadLimit),
-				},
-			},
-		},
-	}, nil
+// messageSearchInput is the typed argument for slack_message_search. The schema
+// is inferred from this struct, eliminating the hand-written parameter map.
+type messageSearchInput struct {
+	Query     string  `json:"query" description:"The search query (e.g., 'from:@user', 'in:general', 'has:link')" required:"true"`
+	Sort      string  `json:"sort" description:"Sort order: 'score' (relevance) or 'timestamp' (newest first)"`
+	SortDir   string  `json:"sort_dir" description:"Sort direction: 'asc' or 'desc'"`
+	Count     float64 `json:"count" description:"Number of results to return (default: 20, max: 100)"`
+	Page      float64 `json:"page" description:"Page number for pagination (default: 1)"`
+	Highlight bool    `json:"highlight" description:"Enable highlighting of search terms in results"`
 }
 
-// Run executes the named Slack tool.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "slack_message_search":
-		return t.runMessageSearch(ctx, args)
-	case "slack_get_messages":
-		return t.runGetMessages(ctx, args)
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
-	}
-}
-
-// runMessageSearch handles the slack_message_search tool.
-func (t *ToolSet) runMessageSearch(ctx context.Context, args map[string]any) (map[string]any, error) {
-	query, ok := args["query"].(string)
-	if !ok || query == "" {
-		return nil, goerr.New("query is required", goerr.V("args", args))
-	}
-
-	opts := &searchOptions{
-		Query: query,
-		Count: 20,
-		Page:  1,
-	}
-
-	if sort, ok := args["sort"].(string); ok {
-		opts.Sort = sort
-	}
-	if sortDir, ok := args["sort_dir"].(string); ok {
-		opts.SortDir = sortDir
-	}
-	if count, ok := args["count"].(float64); ok {
-		opts.Count = int(count)
-	}
-	if page, ok := args["page"].(float64); ok {
-		opts.Page = int(page)
-	}
-	if highlight, ok := args["highlight"].(bool); ok {
-		opts.Highlight = highlight
-	}
-
-	resp, err := t.searchMessages(ctx, opts)
+// buildTools constructs the typed Slack tools. Each tool has its own input
+// struct so the schema and argument decode share a single source of truth.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	searchTool, err := gollem.NewTool(
+		"slack_message_search",
+		"Search for messages in Slack workspace using the search.messages API",
+		func(ctx context.Context, in messageSearchInput) (map[string]any, error) {
+			if in.Query == "" {
+				return nil, goerr.New("query is required", goerr.V("args", in))
+			}
+			opts := &searchOptions{
+				Query:     in.Query,
+				Sort:      in.Sort,
+				SortDir:   in.SortDir,
+				Count:     20,
+				Page:      1,
+				Highlight: in.Highlight,
+			}
+			if in.Count != 0 {
+				opts.Count = int(in.Count)
+			}
+			if in.Page != 0 {
+				opts.Page = int(in.Page)
+			}
+			resp, err := t.searchMessages(ctx, opts)
+			if err != nil {
+				return nil, err
+			}
+			return t.formatResult(resp), nil
+		},
+	)
 	if err != nil {
-		return nil, err
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "slack_message_search"))
 	}
 
-	return t.formatResult(resp), nil
+	getTool, err := gollem.NewTool(
+		"slack_get_messages",
+		"Fetch one or more Slack messages and their thread context in bulk "+
+			"(max 10 per call). Each target is fetched in parallel; per-target failures "+
+			"are reported in the response without aborting the whole call.",
+		func(ctx context.Context, in getMessagesInput) (map[string]any, error) {
+			return t.getMessages(ctx, in)
+		},
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "slack_get_messages"))
+	}
+
+	return []gollem.Tool{searchTool, getTool}, nil
+}
+
+// Specs returns the Slack tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named Slack tool by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
+	}
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by calling auth.test.
@@ -318,7 +276,7 @@ func (t *ToolSet) searchMessages(ctx context.Context, opts *searchOptions) (*sea
 		params.Set("highlight", "true")
 	}
 
-	endpoint := fmt.Sprintf("%s/search.messages?%s", t.baseURL, params.Encode())
+	endpoint := t.baseURL + "/search.messages?" + params.Encode()
 
 	// Slack search is rate-limit prone, so retry on HTTP 429 / "rate_limited",
 	// honoring Retry-After. Non-rate-limit errors are returned immediately.

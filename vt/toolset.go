@@ -24,6 +24,14 @@ type ToolSet struct {
 	baseURL string
 	client  *http.Client
 	logger  *slog.Logger
+	tools   []gollem.Tool
+}
+
+// targetInput is the typed argument shared by every VT lookup tool. The schema
+// (and the runtime decode) is inferred from this struct, so there is no
+// separate hand-written parameter map to drift from the Run implementation.
+type targetInput struct {
+	Target string `json:"target" description:"The indicator value to search" required:"true"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -79,57 +87,91 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build VT tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// indicatorTypes maps each tool name to the VirusTotal API path segment.
-var indicatorTypes = map[string]string{
-	"vt_ip":        "ip_addresses",
-	"vt_domain":    "domains",
-	"vt_file_hash": "files",
-	"vt_url":       "urls",
+// buildTools constructs the typed VirusTotal lookup tools. Each tool shares
+// targetInput but binds a distinct query function, captured per closure.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	type def struct {
+		name, desc string
+		queryFn    func(ctx context.Context, target string) (map[string]any, error)
+	}
+	defs := []def{
+		{
+			name: "vt_ip",
+			desc: "Search the indicator of IPv4/IPv6 from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				return t.query(ctx, "ip_addresses", target)
+			},
+		},
+		{
+			name: "vt_domain",
+			desc: "Search the indicator of domain from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				return t.query(ctx, "domains", target)
+			},
+		},
+		{
+			name: "vt_file_hash",
+			desc: "Search the indicator of file hash from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				return t.query(ctx, "files", target)
+			},
+		},
+		{
+			// VirusTotal's /urls/{id} endpoint requires the URL to be encoded as
+			// base64url (RawURLEncoding, no padding) rather than percent-escaped.
+			name: "vt_url",
+			desc: "Search the indicator of URL from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				id := base64.RawURLEncoding.EncodeToString([]byte(target))
+				return t.queryRaw(ctx, "urls/"+id)
+			},
+		},
+	}
+
+	tools := make([]gollem.Tool, 0, len(defs))
+	for _, d := range defs {
+		queryFn := d.queryFn
+		tool, err := gollem.NewTool(d.name, d.desc,
+			func(ctx context.Context, in targetInput) (map[string]any, error) {
+				if in.Target == "" {
+					return nil, goerr.New("target is required")
+				}
+				return queryFn(ctx, in.Target)
+			})
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", d.name))
+		}
+		tools = append(tools, tool)
+	}
+	return tools, nil
 }
 
-// Specs returns the VirusTotal tool specifications.
+// Specs returns the VirusTotal tool specifications, derived from the typed tools.
 func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	target := func(desc string) map[string]*gollem.Parameter {
-		return map[string]*gollem.Parameter{
-			"target": {
-				Type:        gollem.TypeString,
-				Description: desc,
-				Required:    true,
-			},
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named VirusTotal lookup by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
 		}
 	}
-	return []gollem.ToolSpec{
-		{Name: "vt_ip", Description: "Search the indicator of IPv4/IPv6 from VirusTotal.", Parameters: target("The IP address to search")},
-		{Name: "vt_domain", Description: "Search the indicator of domain from VirusTotal.", Parameters: target("The domain to search")},
-		{Name: "vt_file_hash", Description: "Search the indicator of file hash from VirusTotal.", Parameters: target("The file hash to search")},
-		{Name: "vt_url", Description: "Search the indicator of URL from VirusTotal.", Parameters: target("The URL to search")},
-	}, nil
-}
-
-// Run executes the named VirusTotal lookup.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	indicatorType, ok := indicatorTypes[name]
-	if !ok {
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
-	}
-
-	indicator, ok := args["target"].(string)
-	if !ok || indicator == "" {
-		return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-	}
-
-	// VirusTotal's /urls/{id} endpoint requires the URL to be encoded as
-	// base64url (RawURLEncoding, no padding) rather than percent-escaped, because
-	// the raw URL contains characters that are not valid path segments.
-	if name == "vt_url" {
-		id := base64.RawURLEncoding.EncodeToString([]byte(indicator))
-		return t.queryRaw(ctx, indicatorType+"/"+id)
-	}
-
-	return t.query(ctx, indicatorType, indicator)
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by querying a well-known IP

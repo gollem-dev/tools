@@ -43,10 +43,45 @@ type ToolSet struct {
 	// Populated during New:
 	configs  []*Config
 	runbooks map[RunbookID]*RunbookEntry
+	tools    []gollem.Tool
 
 	// Overridable for testing:
 	clientFactory bigQueryClientFactory
 	storage       storageBackend // nil = use real GCS (created lazily per call)
+}
+
+// listDatasetInput is the (empty) typed input for bigquery_list_dataset.
+type listDatasetInput struct{}
+
+// queryInput is the typed input for bigquery_query.
+type queryInput struct {
+	Query string `json:"query" description:"The SQL query to execute" required:"true"`
+}
+
+// resultInput is the typed input for bigquery_result.
+type resultInput struct {
+	QueryID string `json:"query_id" description:"The ID of the query to get results for" required:"true"`
+	Limit   int    `json:"limit" description:"Maximum number of rows to return"`
+	Offset  int    `json:"offset" description:"Number of rows to skip"`
+}
+
+// tableSummaryInput is the typed input for bigquery_table_summary.
+type tableSummaryInput struct {
+	ProjectID string `json:"project_id" description:"The project ID to filter by (optional)"`
+	DatasetID string `json:"dataset_id" description:"The dataset ID to filter by (optional)"`
+	TableID   string `json:"table_id" description:"The table ID to filter by (optional)"`
+}
+
+// schemaInput is the typed input for bigquery_schema.
+type schemaInput struct {
+	ProjectID string `json:"project_id" description:"The project ID of the table" required:"true"`
+	DatasetID string `json:"dataset_id" description:"The dataset ID of the table" required:"true"`
+	TableID   string `json:"table_id" description:"The table ID to get schema for" required:"true"`
+}
+
+// runbookEntryInput is the typed input for get_runbook_entry.
+type runbookEntryInput struct {
+	RunbookID string `json:"runbook_id" description:"The ID of the runbook entry to retrieve" required:"true"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -169,6 +204,12 @@ func New(projectID string, opts ...Option) (*ToolSet, error) {
 		}
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build BigQuery tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
@@ -207,142 +248,148 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Specs returns the tool specifications for the BigQuery tool set.
+// Specs returns the tool specifications derived from the typed tools.
 func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "bigquery_list_dataset",
-			Description: "List available BigQuery datasets, tables and partial schema that is necessary for investigation",
-			Parameters:  map[string]*gollem.Parameter{},
-		},
-		{
-			Name:        "bigquery_query",
-			Description: bigqueryQueryPrompt(t.scanLimitStr),
-			Parameters: map[string]*gollem.Parameter{
-				"query": {
-					Type:        gollem.TypeString,
-					Description: "The SQL query to execute",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "bigquery_result",
-			Description: "Get the results of a previously executed query. Returns rows as JSON string in 'rows_json' field due to Vertex AI type limitations.",
-			Parameters: map[string]*gollem.Parameter{
-				"query_id": {
-					Type:        gollem.TypeString,
-					Description: "The ID of the query to get results for",
-					Required:    true,
-				},
-				"limit": {
-					Type:        gollem.TypeInteger,
-					Description: "Maximum number of rows to return",
-				},
-				"offset": {
-					Type:        gollem.TypeInteger,
-					Description: "Number of rows to skip",
-				},
-			},
-		},
-		{
-			Name:        "bigquery_table_summary",
-			Description: "Get a summary of available BigQuery tables including all fields, examples, and descriptions",
-			Parameters: map[string]*gollem.Parameter{
-				"project_id": {
-					Type:        gollem.TypeString,
-					Description: "The project ID to filter by (optional)",
-				},
-				"dataset_id": {
-					Type:        gollem.TypeString,
-					Description: "The dataset ID to filter by (optional)",
-				},
-				"table_id": {
-					Type:        gollem.TypeString,
-					Description: "The table ID to filter by (optional)",
-				},
-			},
-		},
-		{
-			Name:        "bigquery_schema",
-			Description: "Get detailed schema information for a specific BigQuery table",
-			Parameters: map[string]*gollem.Parameter{
-				"project_id": {
-					Type:        gollem.TypeString,
-					Description: "The project ID of the table",
-					Required:    true,
-				},
-				"dataset_id": {
-					Type:        gollem.TypeString,
-					Description: "The dataset ID of the table",
-					Required:    true,
-				},
-				"table_id": {
-					Type:        gollem.TypeString,
-					Description: "The table ID to get schema for",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "get_runbook_entry",
-			Description: "Get a specific runbook entry by its ID. Returns the SQL content and description of the runbook.",
-			Parameters: map[string]*gollem.Parameter{
-				"runbook_id": {
-					Type:        gollem.TypeString,
-					Description: "The ID of the runbook entry to retrieve",
-					Required:    true,
-				},
-			},
-		},
-	}, nil
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
 }
 
-// Run dispatches to the appropriate handler based on name.
+// Run dispatches to the matching typed tool by name.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	if args == nil {
-		args = make(map[string]any)
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
 	}
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
+}
 
-	// bigquery_table_summary is a pure in-memory operation.
-	if name == "bigquery_table_summary" {
-		if len(t.configs) == 0 {
-			return nil, goerr.New("no BigQuery configuration loaded; use WithConfigFiles")
-		}
-		var projectID, datasetID, tableID string
-		if v, ok := args["project_id"].(string); ok {
-			projectID = v
-		}
-		if v, ok := args["dataset_id"].(string); ok {
-			datasetID = v
-		}
-		if v, ok := args["table_id"].(string); ok {
-			tableID = v
-		}
-		return t.getTableSummary(projectID, datasetID, tableID)
-	}
-
-	// get_runbook_entry is also in-memory.
-	if name == "get_runbook_entry" {
-		id, ok := args["runbook_id"].(string)
-		if !ok || id == "" {
-			return nil, goerr.New("runbook_id parameter is required")
-		}
-		return t.getRunbookEntry(id)
-	}
-
-	// All remaining tools need a BigQuery client.
-	opts, err := t.clientOptions(ctx)
+// buildTools constructs the typed BigQuery tools. Each tool has a distinct input
+// struct so its schema is the single source of truth for both spec generation and
+// argument decoding.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	listDataset, err := gollem.NewTool("bigquery_list_dataset",
+		"List available BigQuery datasets, tables and partial schema that is necessary for investigation",
+		func(ctx context.Context, in listDatasetInput) (map[string]any, error) {
+			if len(t.configs) == 0 {
+				return nil, goerr.New("no BigQuery configuration loaded; use WithConfigFiles")
+			}
+			return t.listDatasets()
+		})
 	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build BigQuery client options")
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_list_dataset"))
 	}
-	client, err := t.clientFactory.NewClient(ctx, t.projectID, opts...)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to create BigQuery client")
-	}
-	defer safeClose(t.logger, client)
 
-	return t.runWithClient(ctx, name, args, client)
+	queryTool, err := gollem.NewTool("bigquery_query",
+		bigqueryQueryPrompt(t.scanLimitStr),
+		func(ctx context.Context, in queryInput) (map[string]any, error) {
+			if in.Query == "" {
+				return nil, goerr.New("query parameter is required")
+			}
+			if len(t.configs) == 0 {
+				return nil, goerr.New("no BigQuery configuration loaded; use WithConfigFiles")
+			}
+			opts, err := t.clientOptions(ctx)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to build BigQuery client options")
+			}
+			client, err := t.clientFactory.NewClient(ctx, t.projectID, opts...)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to create BigQuery client")
+			}
+			defer safeClose(t.logger, client)
+			return t.executeQuery(ctx, client, in.Query)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_query"))
+	}
+
+	resultTool, err := gollem.NewTool("bigquery_result",
+		"Get the results of a previously executed query. Returns rows as JSON string in 'rows_json' field due to Vertex AI type limitations.",
+		func(ctx context.Context, in resultInput) (map[string]any, error) {
+			if in.QueryID == "" {
+				return nil, goerr.New("query_id parameter is required")
+			}
+			if len(t.configs) == 0 {
+				return nil, goerr.New("no BigQuery configuration loaded; use WithConfigFiles")
+			}
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 100
+			}
+			opts, err := t.clientOptions(ctx)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to build BigQuery client options")
+			}
+			client, err := t.clientFactory.NewClient(ctx, t.projectID, opts...)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to create BigQuery client")
+			}
+			defer safeClose(t.logger, client)
+			return t.getQueryResults(ctx, client, in.QueryID, limit, in.Offset)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_result"))
+	}
+
+	tableSummaryTool, err := gollem.NewTool("bigquery_table_summary",
+		"Get a summary of available BigQuery tables including all fields, examples, and descriptions",
+		func(ctx context.Context, in tableSummaryInput) (map[string]any, error) {
+			if len(t.configs) == 0 {
+				return nil, goerr.New("no BigQuery configuration loaded; use WithConfigFiles")
+			}
+			return t.getTableSummary(in.ProjectID, in.DatasetID, in.TableID)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_table_summary"))
+	}
+
+	schemaTool, err := gollem.NewTool("bigquery_schema",
+		"Get detailed schema information for a specific BigQuery table",
+		func(ctx context.Context, in schemaInput) (map[string]any, error) {
+			if in.ProjectID == "" {
+				return nil, goerr.New("project_id parameter is required")
+			}
+			if in.DatasetID == "" {
+				return nil, goerr.New("dataset_id parameter is required")
+			}
+			if in.TableID == "" {
+				return nil, goerr.New("table_id parameter is required")
+			}
+			if in.ProjectID == t.projectID {
+				opts, err := t.clientOptions(ctx)
+				if err != nil {
+					return nil, goerr.Wrap(err, "failed to build BigQuery client options")
+				}
+				client, err := t.clientFactory.NewClient(ctx, t.projectID, opts...)
+				if err != nil {
+					return nil, goerr.Wrap(err, "failed to create BigQuery client")
+				}
+				defer safeClose(t.logger, client)
+				return t.getTableSchemaWithClient(ctx, client, in.DatasetID, in.TableID)
+			}
+			return t.getTableSchema(ctx, in.ProjectID, in.DatasetID, in.TableID)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_schema"))
+	}
+
+	runbookTool, err := gollem.NewTool("get_runbook_entry",
+		"Get a specific runbook entry by its ID. Returns the SQL content and description of the runbook.",
+		func(ctx context.Context, in runbookEntryInput) (map[string]any, error) {
+			if in.RunbookID == "" {
+				return nil, goerr.New("runbook_id parameter is required")
+			}
+			return t.getRunbookEntry(in.RunbookID)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "get_runbook_entry"))
+	}
+
+	return []gollem.Tool{listDataset, queryTool, resultTool, tableSummaryTool, schemaTool, runbookTool}, nil
 }
 
 // clientOptions returns the google API client options derived from credentials

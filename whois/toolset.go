@@ -33,11 +33,19 @@ func (defaultWhoisClient) Whois(ctx context.Context, query string, servers ...st
 	return c.Whois(query, servers...)
 }
 
+// whoisInput is the typed argument for all WHOIS lookup tools. The schema is
+// inferred from struct tags by gollem.NewTool, making it the single source of
+// truth for both the spec and the Run decode.
+type whoisInput struct {
+	Target string `json:"target" description:"The target (domain name or IP address) to look up" required:"true"`
+}
+
 // ToolSet implements gollem.ToolSet for WHOIS lookups. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
 	logger *slog.Logger
 	client whoisClient
+	tools  []gollem.Tool
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -64,59 +72,70 @@ func New(opts ...Option) (*ToolSet, error) {
 	for _, opt := range opts {
 		opt(t)
 	}
+
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build whois tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Specs returns the WHOIS tool specifications.
-func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
+// buildTools constructs the typed WHOIS lookup tools. Both tools share the
+// same whoisInput struct and implementation; they differ only in name and
+// description.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	defs := []struct{ name, desc string }{
 		{
-			Name:        "whois_domain",
-			Description: "Perform a WHOIS lookup for a domain name to retrieve registration information such as owner, registrar, registration date, and expiration date.",
-			Parameters: map[string]*gollem.Parameter{
-				"target": {
-					Type:        gollem.TypeString,
-					Description: "The domain name to look up",
-					Required:    true,
-				},
-			},
+			"whois_domain",
+			"Perform a WHOIS lookup for a domain name to retrieve registration information such as owner, registrar, registration date, and expiration date.",
 		},
 		{
-			Name:        "whois_ip",
-			Description: "Perform a WHOIS lookup for an IP address (IPv4 or IPv6) to retrieve network registration information such as owner, ISP, and allocated range.",
-			Parameters: map[string]*gollem.Parameter{
-				"target": {
-					Type:        gollem.TypeString,
-					Description: "The IP address (IPv4 or IPv6) to look up",
-					Required:    true,
-				},
-			},
+			"whois_ip",
+			"Perform a WHOIS lookup for an IP address (IPv4 or IPv6) to retrieve network registration information such as owner, ISP, and allocated range.",
 		},
-	}, nil
+	}
+
+	tools := make([]gollem.Tool, 0, len(defs))
+	for _, d := range defs {
+		name := d.name // capture per-iteration
+		tool, err := gollem.NewTool(d.name, d.desc,
+			func(ctx context.Context, in whoisInput) (map[string]any, error) {
+				if in.Target == "" {
+					return nil, goerr.New("target is required", goerr.V("name", name))
+				}
+				result, err := t.client.Whois(ctx, in.Target)
+				if err != nil {
+					return nil, goerr.Wrap(err, "failed to query whois", goerr.V("target", in.Target))
+				}
+				return map[string]any{"result": result}, nil
+			})
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", d.name))
+		}
+		tools = append(tools, tool)
+	}
+	return tools, nil
 }
 
-// Run executes the named WHOIS lookup.
+// Specs returns the WHOIS tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named WHOIS lookup by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "whois_domain", "whois_ip":
-		// valid
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
 	}
-
-	target, ok := args["target"].(string)
-	if !ok || target == "" {
-		return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-	}
-
-	result, err := t.client.Whois(ctx, target)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to query whois", goerr.V("target", target))
-	}
-
-	return map[string]any{
-		"result": result,
-	}, nil
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies basic WHOIS connectivity by querying a well-known IP address.

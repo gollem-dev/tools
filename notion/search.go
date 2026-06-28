@@ -7,45 +7,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gollem-dev/gollem"
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func searchSpec() gollem.ToolSpec {
-	return gollem.ToolSpec{
-		Name: toolSearch,
-		Description: "Search Notion pages and databases shared with the integration. " +
-			"Matches titles against the query string. Returns id, type (page or database), title, URL, and last edited timestamp.",
-		Parameters: map[string]*gollem.Parameter{
-			"query": {
-				Type:        gollem.TypeString,
-				Description: "Title substring to search for. Pass an empty string to list all accessible pages/databases.",
-				Required:    true,
-			},
-			"page_size": {
-				Type:        gollem.TypeInteger,
-				Description: "Number of results to return (1-100, default 20).",
-				Required:    false,
-			},
-			"filter_type": {
-				Type:        gollem.TypeString,
-				Description: "Limit results to a specific object type. Omit for both pages and databases.",
-				Required:    false,
-				Enum:        []string{"page", "database"},
-			},
-			"sort": {
-				Type:        gollem.TypeString,
-				Description: "Order results by last edited time. Omit for Notion's default ordering.",
-				Required:    false,
-				Enum:        []string{"ascending", "descending"},
-			},
-			"start_cursor": {
-				Type:        gollem.TypeString,
-				Description: "Pagination cursor returned as next_cursor by a previous call. Omit to start from the beginning.",
-				Required:    false,
-			},
-		},
-	}
+// searchInput is the typed argument for notion_search. Query is a pointer to
+// distinguish an absent key (nil) from an explicitly empty string (non-nil),
+// because an empty query is valid (it lists all accessible pages/databases).
+type searchInput struct {
+	Query       *string `json:"query" description:"Title substring to search for. Pass an empty string to list all accessible pages/databases."`
+	PageSize    int     `json:"page_size" description:"Number of results to return (1-100, default 20)." min:"1" max:"100"`
+	FilterType  string  `json:"filter_type" description:"Limit results to a specific object type. Omit for both pages and databases." enum:"page,database"`
+	Sort        string  `json:"sort" description:"Order results by last edited time. Omit for Notion's default ordering." enum:"ascending,descending"`
+	StartCursor string  `json:"start_cursor" description:"Pagination cursor returned as next_cursor by a previous call. Omit to start from the beginning."`
 }
 
 // searchResponse mirrors the relevant fields of the POST /v1/search response.
@@ -72,26 +45,33 @@ type notionObject struct {
 	Properties map[string]json.RawMessage `json:"properties"`
 }
 
-func (t *ToolSet) search(ctx context.Context, args map[string]any) (map[string]any, error) {
+func (t *ToolSet) runSearch(ctx context.Context, in searchInput) (map[string]any, error) {
 	// query may be empty (lists all accessible objects), but the caller must opt
-	// in explicitly by passing the key.
-	query, ok := args["query"].(string)
-	if !ok {
+	// in explicitly by providing the key; a missing key (nil pointer) is rejected.
+	if in.Query == nil {
 		return nil, goerr.New("query is required (pass empty string to list all)")
+	}
+	query := *in.Query
+
+	pageSize := in.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	} else if pageSize > 100 {
+		pageSize = 100
 	}
 
 	body := map[string]any{
 		"query":     query,
-		"page_size": clampPageSize(args["page_size"]),
+		"page_size": pageSize,
 	}
-	if v, ok := args["filter_type"].(string); ok && v != "" {
-		body["filter"] = map[string]any{"property": "object", "value": v}
+	if in.FilterType != "" {
+		body["filter"] = map[string]any{"property": "object", "value": in.FilterType}
 	}
-	if v, ok := args["sort"].(string); ok && v != "" {
-		body["sort"] = map[string]any{"timestamp": "last_edited_time", "direction": v}
+	if in.Sort != "" {
+		body["sort"] = map[string]any{"timestamp": "last_edited_time", "direction": in.Sort}
 	}
-	if v, ok := args["start_cursor"].(string); ok && v != "" {
-		body["start_cursor"] = v
+	if in.StartCursor != "" {
+		body["start_cursor"] = in.StartCursor
 	}
 
 	var resp searchResponse
@@ -141,25 +121,4 @@ func plainText(rts []richText) string {
 		sb.WriteString(rt.PlainText)
 	}
 	return sb.String()
-}
-
-// clampPageSize coerces a tool argument into a valid Notion page_size, defaulting
-// to 20 and clamping to [1, 100].
-func clampPageSize(v any) int {
-	n := 0
-	switch x := v.(type) {
-	case float64: // JSON numbers decode to float64 through map[string]any
-		n = int(x)
-	case int:
-		n = x
-	case int64:
-		n = int(x)
-	}
-	if n <= 0 {
-		return 20
-	}
-	if n > 100 {
-		return 100
-	}
-	return n
 }

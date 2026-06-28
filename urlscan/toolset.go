@@ -30,6 +30,14 @@ type ToolSet struct {
 	timeout time.Duration
 	client  *http.Client
 	logger  *slog.Logger
+	tools   []gollem.Tool
+}
+
+// scanInput is the typed argument struct for urlscan_scan. The schema and
+// runtime decode are inferred from the struct tags, eliminating the need for a
+// separate hand-written parameter map.
+type scanInput struct {
+	URL string `json:"url" description:"The URL to scan" required:"true"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -105,44 +113,50 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build urlscan tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Specs returns the urlscan tool specifications.
-func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "urlscan_scan",
-			Description: "Scan a URL with urlscan.io to analyse its content and behaviour.",
-			Parameters: map[string]*gollem.Parameter{
-				"url": {
-					Type:        gollem.TypeString,
-					Description: "The URL to scan",
-					Required:    true,
-				},
-			},
-		},
-	}, nil
+// buildTools constructs the typed urlscan tool.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	tool, err := gollem.NewTool("urlscan_scan", "Scan a URL with urlscan.io to analyse its content and behaviour.",
+		func(ctx context.Context, in scanInput) (map[string]any, error) {
+			if in.URL == "" {
+				return nil, goerr.New("url parameter is required", goerr.V("url", in.URL))
+			}
+			if _, err := url.Parse(in.URL); err != nil {
+				return nil, goerr.Wrap(err, "invalid URL", goerr.V("url", in.URL))
+			}
+			return t.scan(ctx, in.URL)
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "urlscan_scan"))
+	}
+	return []gollem.Tool{tool}, nil
 }
 
-// Run executes the named urlscan tool.
+// Specs returns the urlscan tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named urlscan tool by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "urlscan_scan":
-		// valid
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
 	}
-
-	urlStr, ok := args["url"].(string)
-	if !ok || urlStr == "" {
-		return nil, goerr.New("url parameter is required", goerr.V("args", args))
-	}
-	if _, err := url.Parse(urlStr); err != nil {
-		return nil, goerr.Wrap(err, "invalid URL", goerr.V("url", urlStr))
-	}
-
-	return t.scan(ctx, urlStr)
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies connectivity and credentials by performing a minimal

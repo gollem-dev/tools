@@ -40,6 +40,7 @@ type ToolSet struct {
 	tokenEndpoint string
 	client        *http.Client
 	logger        *slog.Logger
+	tools         []gollem.Tool
 
 	// Token cache — guarded by mu.
 	mu          sync.Mutex
@@ -90,6 +91,16 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+// devicesByUserInput holds the typed arguments for the intune_devices_by_user tool.
+type devicesByUserInput struct {
+	UserPrincipalName string `json:"user_principal_name" description:"User's email address or UPN" required:"true"`
+}
+
+// devicesByHostnameInput holds the typed arguments for the intune_devices_by_hostname tool.
+type devicesByHostnameInput struct {
+	DeviceName string `json:"device_name" description:"Device hostname to search" required:"true"`
+}
+
 // New constructs the ToolSet with the required Azure AD credentials.
 // tenantID, clientID, and clientSecret must all be non-empty.
 // It only validates static configuration; use Ping to verify connectivity and credentials.
@@ -121,57 +132,66 @@ func New(tenantID string, clientID string, clientSecret string, opts ...Option) 
 		t.tokenEndpoint = fmt.Sprintf(defaultTokenEndpointFmt, t.tenantID)
 	}
 
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build Intune tools")
+	}
+	t.tools = tools
+
 	return t, nil
 }
 
-// Specs returns the Intune tool specifications.
-func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "intune_devices_by_user",
-			Description: "Search Intune managed devices by user email address or UPN (User Principal Name). Returns device details including compliance state, OS, encryption, and recent sign-in IP history.",
-			Parameters: map[string]*gollem.Parameter{
-				"user_principal_name": {
-					Type:        gollem.TypeString,
-					Description: "User's email address or UPN",
-					Required:    true,
-				},
-			},
+// buildTools constructs the typed Intune tools. Each tool has a distinct input
+// struct so schema and Run decode share a single source of truth.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	toolByUser, err := gollem.NewTool(
+		"intune_devices_by_user",
+		"Search Intune managed devices by user email address or UPN (User Principal Name). Returns device details including compliance state, OS, encryption, and recent sign-in IP history.",
+		func(ctx context.Context, in devicesByUserInput) (map[string]any, error) {
+			if in.UserPrincipalName == "" {
+				return nil, goerr.New("user_principal_name is required", goerr.V("args", in))
+			}
+			return t.searchDevicesByUser(ctx, in.UserPrincipalName)
 		},
-		{
-			Name:        "intune_devices_by_hostname",
-			Description: "Search Intune managed device by device hostname. Returns device details including compliance state, OS, encryption, and owner information.",
-			Parameters: map[string]*gollem.Parameter{
-				"device_name": {
-					Type:        gollem.TypeString,
-					Description: "Device hostname to search",
-					Required:    true,
-				},
-			},
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "intune_devices_by_user"))
+	}
+
+	toolByHostname, err := gollem.NewTool(
+		"intune_devices_by_hostname",
+		"Search Intune managed device by device hostname. Returns device details including compliance state, OS, encryption, and owner information.",
+		func(ctx context.Context, in devicesByHostnameInput) (map[string]any, error) {
+			if in.DeviceName == "" {
+				return nil, goerr.New("device_name is required", goerr.V("args", in))
+			}
+			return t.searchDevicesByHostname(ctx, in.DeviceName)
 		},
-	}, nil
+	)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "intune_devices_by_hostname"))
+	}
+
+	return []gollem.Tool{toolByUser, toolByHostname}, nil
 }
 
-// Run executes the named Intune tool.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "intune_devices_by_user":
-		upn, ok := args["user_principal_name"].(string)
-		if !ok || upn == "" {
-			return nil, goerr.New("user_principal_name is required", goerr.V("args", args))
-		}
-		return t.searchDevicesByUser(ctx, upn)
-
-	case "intune_devices_by_hostname":
-		deviceName, ok := args["device_name"].(string)
-		if !ok || deviceName == "" {
-			return nil, goerr.New("device_name is required", goerr.V("args", args))
-		}
-		return t.searchDevicesByHostname(ctx, deviceName)
-
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+// Specs returns the Intune tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
 	}
+	return specs, nil
+}
+
+// Run executes the named Intune tool by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
+	}
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // Ping verifies credentials by acquiring an OAuth access token.

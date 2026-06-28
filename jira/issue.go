@@ -5,33 +5,18 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gollem-dev/gollem"
 	"github.com/m-mizutani/goerr/v2"
 )
 
 // maxBulkIssues is the per-request cap Jira enforces on issue/bulkfetch.
 const maxBulkIssues = 100
 
-func getIssuesSpec() gollem.ToolSpec {
-	return gollem.ToolSpec{
-		Name: toolGetIssues,
-		Description: "Fetch the full content of one or more Jira issues by key or id (batched in a single request). " +
-			"Each issue's description (and optionally its comments) is returned as Markdown. " +
-			"Keys that cannot be resolved are reported in not_found.",
-		Parameters: map[string]*gollem.Parameter{
-			"issue_keys": {
-				Type:        gollem.TypeArray,
-				Description: "Issue keys or ids to fetch (e.g. [\"PROJ-1\", \"PROJ-2\"]). Between 1 and 100 entries.",
-				Required:    true,
-				Items:       &gollem.Parameter{Type: gollem.TypeString},
-			},
-			"include_comments": {
-				Type:        gollem.TypeBoolean,
-				Description: "When true, include each issue's comments (author, created time, Markdown body). Default false.",
-				Required:    false,
-			},
-		},
-	}
+// getIssuesInput is the typed argument for the jira_get_issues tool.
+// The schema is inferred from the struct tags, so there is no separate
+// hand-written parameter map to drift from the Run implementation.
+type getIssuesInput struct {
+	IssueKeys       []string `json:"issue_keys" description:"Issue keys or ids to fetch (e.g. [\"PROJ-1\", \"PROJ-2\"]). Between 1 and 100 entries." required:"true"`
+	IncludeComments bool     `json:"include_comments" description:"When true, include each issue's comments (author, created time, Markdown body). Default false."`
 }
 
 // bulkFetchResponse mirrors the relevant fields of POST /rest/api/3/issue/bulkfetch.
@@ -80,30 +65,26 @@ type issueComment struct {
 	} `json:"author"`
 }
 
-func (t *ToolSet) getIssues(ctx context.Context, args map[string]any) (map[string]any, error) {
-	keys, err := stringSlice(args["issue_keys"])
-	if err != nil {
-		return nil, goerr.Wrap(err, "invalid issue_keys")
-	}
-	if len(keys) == 0 {
+func (t *ToolSet) getIssues(ctx context.Context, in getIssuesInput) (map[string]any, error) {
+	// Keep the explicit empty check: direct ToolSet.Run calls in tests bypass
+	// gollem's required-field validation, so this check preserves the contract.
+	if len(in.IssueKeys) == 0 {
 		return nil, goerr.New("issue_keys must contain at least one key")
 	}
-	if len(keys) > maxBulkIssues {
-		return nil, goerr.New("too many issue_keys", goerr.V("count", len(keys)), goerr.V("max", maxBulkIssues))
+	if len(in.IssueKeys) > maxBulkIssues {
+		return nil, goerr.New("too many issue_keys", goerr.V("count", len(in.IssueKeys)), goerr.V("max", maxBulkIssues))
 	}
-
-	includeComments, _ := args["include_comments"].(bool)
 
 	fields := []string{
 		"summary", "description", "status", "issuetype",
 		"priority", "assignee", "reporter", "labels", "created", "updated",
 	}
-	if includeComments {
+	if in.IncludeComments {
 		fields = append(fields, "comment")
 	}
 
 	body := map[string]any{
-		"issueIdsOrKeys": keys,
+		"issueIdsOrKeys": in.IssueKeys,
 		"fields":         fields,
 	}
 
@@ -127,7 +108,7 @@ func (t *ToolSet) getIssues(ctx context.Context, args map[string]any) (map[strin
 			"updated":     is.Fields.Updated,
 			"description": adfToMarkdown(is.Fields.Description),
 		}
-		if includeComments {
+		if in.IncludeComments {
 			comments := make([]map[string]any, 0, len(is.Fields.Comment.Comments))
 			for _, c := range is.Fields.Comment.Comments {
 				comments = append(comments, map[string]any{
@@ -150,36 +131,6 @@ func (t *ToolSet) getIssues(ctx context.Context, args map[string]any) (map[strin
 		"items":     items,
 		"not_found": notFound,
 	}, nil
-}
-
-// stringSlice coerces a tool argument (a JSON array decoded into []any, or a
-// single string) into a []string of non-empty entries.
-func stringSlice(v any) ([]string, error) {
-	switch x := v.(type) {
-	case nil:
-		return nil, nil
-	case []string:
-		return x, nil
-	case string:
-		if x == "" {
-			return nil, nil
-		}
-		return []string{x}, nil
-	case []any:
-		out := make([]string, 0, len(x))
-		for _, e := range x {
-			s, ok := e.(string)
-			if !ok {
-				return nil, goerr.New("issue_keys entries must be strings", goerr.V("entry", e))
-			}
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-		return out, nil
-	default:
-		return nil, goerr.New("issue_keys must be an array of strings")
-	}
 }
 
 // orEmptySlice returns s, or an empty (non-nil) slice when s is nil, so the

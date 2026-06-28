@@ -9,13 +9,27 @@ import (
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func (t *ToolSet) runCodeSearch(ctx context.Context, args map[string]any) (map[string]any, error) {
-	query, ok := args["query"].(string)
-	if !ok || query == "" {
-		return nil, goerr.New("query is required")
-	}
+// codeSearchInput is the typed argument struct for github_code_search.
+type codeSearchInput struct {
+	Query      string `json:"query" description:"Search query using GitHub code search syntax. Supports operators like AND, OR, NOT" required:"true" minLength:"1"`
+	Language   string `json:"language" description:"Filter by programming language (e.g., 'go', 'python', 'javascript')" pattern:"^[a-zA-Z0-9+#-]+$"`
+	Path       string `json:"path" description:"Filter by file path pattern (e.g., 'src/', 'test/', '*.go')"`
+	Filename   string `json:"filename" description:"Filter by filename (e.g., 'config.yaml', 'main.go')" pattern:"^[^/]+$"`
+	RepoFilter string `json:"repo_filter" description:"Optional repository scope as a comma-separated list of 'owner/name' entries (e.g. 'octocat/Hello-World,octocat/Spoon-Knife'). When omitted, the search is not scoped to any specific repos; use 'repo:', 'org:', or 'user:' qualifiers in the query for finer control."`
+}
 
-	searchQuery := buildCodeSearchQuery(query, args)
+// issueSearchInput is the typed argument struct for github_issue_search.
+type issueSearchInput struct {
+	Query      string `json:"query" description:"Search query using GitHub issue search syntax. Supports operators like in:title, in:body" required:"true" minLength:"1"`
+	State      string `json:"state" description:"Filter by state: 'open', 'closed', or 'all'" enum:"open,closed,all"`
+	Labels     string `json:"labels" description:"Filter by labels (comma-separated list, e.g., 'bug,help wanted')" pattern:"^[a-zA-Z0-9-_,\\s]+$"`
+	Author     string `json:"author" description:"Filter by author username (GitHub username)" pattern:"^[a-zA-Z0-9][a-zA-Z0-9-]*$" maxLength:"39"`
+	Type       string `json:"type" description:"Filter by type: 'issue' for issues only, 'pr' for pull requests only, or 'all' for both" enum:"issue,pr,all"`
+	RepoFilter string `json:"repo_filter" description:"Optional repository scope as a comma-separated list of 'owner/name' entries. When omitted, the search is not scoped to any specific repos; use 'repo:', 'org:', or 'user:' qualifiers in the query for finer control."`
+}
+
+func (t *ToolSet) runCodeSearch(ctx context.Context, in codeSearchInput) (map[string]any, error) {
+	searchQuery := buildCodeSearchQuery(in)
 
 	opts := &ghlib.SearchOptions{
 		ListOptions: ghlib.ListOptions{PerPage: 30},
@@ -59,31 +73,26 @@ func (t *ToolSet) runCodeSearch(ctx context.Context, args map[string]any) (map[s
 }
 
 // buildCodeSearchQuery appends optional qualifiers to the base query string.
-func buildCodeSearchQuery(baseQuery string, args map[string]any) string {
-	parts := []string{baseQuery}
+func buildCodeSearchQuery(in codeSearchInput) string {
+	parts := []string{in.Query}
 
-	if filters := parseRepoFilter(args); len(filters) > 0 {
+	if filters := parseRepoFilter(in.RepoFilter); len(filters) > 0 {
 		parts = append(parts, strings.Join(filters, " "))
 	}
-	if lang, ok := args["language"].(string); ok && lang != "" {
-		parts = append(parts, fmt.Sprintf("language:%s", lang))
+	if in.Language != "" {
+		parts = append(parts, fmt.Sprintf("language:%s", in.Language))
 	}
-	if path, ok := args["path"].(string); ok && path != "" {
-		parts = append(parts, fmt.Sprintf("path:%s", path))
+	if in.Path != "" {
+		parts = append(parts, fmt.Sprintf("path:%s", in.Path))
 	}
-	if filename, ok := args["filename"].(string); ok && filename != "" {
-		parts = append(parts, fmt.Sprintf("filename:%s", filename))
+	if in.Filename != "" {
+		parts = append(parts, fmt.Sprintf("filename:%s", in.Filename))
 	}
 	return strings.Join(parts, " ")
 }
 
-func (t *ToolSet) runIssueSearch(ctx context.Context, args map[string]any) (map[string]any, error) {
-	query, ok := args["query"].(string)
-	if !ok || query == "" {
-		return nil, goerr.New("query is required")
-	}
-
-	searchQuery := buildIssueSearchQuery(query, args)
+func (t *ToolSet) runIssueSearch(ctx context.Context, in issueSearchInput) (map[string]any, error) {
+	searchQuery := buildIssueSearchQuery(in)
 
 	opts := &ghlib.SearchOptions{
 		ListOptions: ghlib.ListOptions{PerPage: 30},
@@ -154,28 +163,28 @@ func (t *ToolSet) runIssueSearch(ctx context.Context, args map[string]any) (map[
 }
 
 // buildIssueSearchQuery appends optional qualifiers to the base query string.
-func buildIssueSearchQuery(baseQuery string, args map[string]any) string {
-	parts := []string{baseQuery}
+func buildIssueSearchQuery(in issueSearchInput) string {
+	parts := []string{in.Query}
 
-	if filters := parseRepoFilter(args); len(filters) > 0 {
+	if filters := parseRepoFilter(in.RepoFilter); len(filters) > 0 {
 		parts = append(parts, strings.Join(filters, " "))
 	}
-	if state, ok := args["state"].(string); ok && state != "" && state != "all" {
-		parts = append(parts, fmt.Sprintf("state:%s", state))
+	if in.State != "" && in.State != "all" {
+		parts = append(parts, fmt.Sprintf("state:%s", in.State))
 	}
-	if author, ok := args["author"].(string); ok && author != "" {
-		parts = append(parts, fmt.Sprintf("author:%s", author))
+	if in.Author != "" {
+		parts = append(parts, fmt.Sprintf("author:%s", in.Author))
 	}
-	if labels, ok := args["labels"].(string); ok && labels != "" {
-		for label := range strings.SplitSeq(labels, ",") {
+	if in.Labels != "" {
+		for label := range strings.SplitSeq(in.Labels, ",") {
 			label = strings.TrimSpace(label)
 			if label != "" {
 				parts = append(parts, fmt.Sprintf("label:%q", label))
 			}
 		}
 	}
-	if typeFilter, ok := args["type"].(string); ok && typeFilter != "" && typeFilter != "all" {
-		switch typeFilter {
+	if in.Type != "" && in.Type != "all" {
+		switch in.Type {
 		case "issue":
 			parts = append(parts, "type:issue")
 		case "pr":
@@ -185,17 +194,15 @@ func buildIssueSearchQuery(baseQuery string, args map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-// parseRepoFilter parses the "repo_filter" argument as a comma-separated list
-// of "owner/name" entries and returns them as `repo:owner/name` qualifiers.
-// Entries that do not contain "/" are skipped.
-func parseRepoFilter(args map[string]any) []string {
-	raw, ok := args["repo_filter"].(string)
-	if !ok || raw == "" {
+// parseRepoFilter parses a comma-separated list of "owner/name" entries and
+// returns them as `repo:owner/name` qualifiers. Entries without "/" are skipped.
+func parseRepoFilter(repoFilter string) []string {
+	if repoFilter == "" {
 		return nil
 	}
 
 	var filters []string
-	for entry := range strings.SplitSeq(raw, ",") {
+	for entry := range strings.SplitSeq(repoFilter, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" || !strings.Contains(entry, "/") {
 			continue

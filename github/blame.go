@@ -90,36 +90,29 @@ const blameQuery = `query($owner: String!, $name: String!, $ref: String!, $path:
 
 const githubGraphQLURL = "https://api.github.com/graphql"
 
-func (t *ToolSet) runGetBlame(ctx context.Context, args map[string]any) (map[string]any, error) {
-	owner, ok := args["owner"].(string)
-	if !ok || owner == "" {
-		return nil, goerr.New("owner is required")
-	}
+// getBlameInput is the typed argument struct for github_get_blame.
+type getBlameInput struct {
+	Owner string `json:"owner" description:"Repository owner (organization or username)" required:"true" pattern:"^[a-zA-Z0-9][a-zA-Z0-9-]*$" minLength:"1" maxLength:"39"`
+	Repo  string `json:"repo" description:"Repository name" required:"true" pattern:"^[a-zA-Z0-9_.-]+$" minLength:"1" maxLength:"100"`
+	Path  string `json:"path" description:"File path in the repository (e.g., 'src/main.go')" required:"true" minLength:"1"`
+	Ref   string `json:"ref" description:"Git reference: branch name, tag, or commit SHA. Defaults to the repository's default branch." pattern:"^[a-zA-Z0-9/_.-]+$"`
+}
 
-	repo, ok := args["repo"].(string)
-	if !ok || repo == "" {
-		return nil, goerr.New("repo is required")
-	}
-
-	path, ok := args["path"].(string)
-	if !ok || path == "" {
-		return nil, goerr.New("path is required")
-	}
-
+func (t *ToolSet) runGetBlame(ctx context.Context, in getBlameInput) (map[string]any, error) {
 	// Default ref is "HEAD", which GitHub resolves to the repository's default
 	// branch (main, master, or otherwise). Override if a ref is provided.
 	ref := "HEAD"
-	if r, ok := args["ref"].(string); ok && r != "" {
-		ref = r
+	if in.Ref != "" {
+		ref = in.Ref
 	}
 
 	reqBody := graphQLRequest{
 		Query: blameQuery,
 		Variables: map[string]any{
-			"owner": owner,
-			"name":  repo,
+			"owner": in.Owner,
+			"name":  in.Repo,
 			"ref":   ref,
-			"path":  path,
+			"path":  in.Path,
 		},
 	}
 
@@ -138,9 +131,9 @@ func (t *ToolSet) runGetBlame(ctx context.Context, args map[string]any) (map[str
 	resp, err := t.client.DoGraphQL(ctx, httpReq)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to execute GraphQL request",
-			goerr.V("owner", owner),
-			goerr.V("repo", repo),
-			goerr.V("path", path))
+			goerr.V("owner", in.Owner),
+			goerr.V("repo", in.Repo),
+			goerr.V("path", in.Path))
 	}
 	defer safeClose(t.logger, resp.Body)
 
@@ -167,9 +160,9 @@ func (t *ToolSet) runGetBlame(ctx context.Context, args map[string]any) (map[str
 
 	if gqlResp.Data.Repository.Object == nil || gqlResp.Data.Repository.Object.Blame == nil {
 		return nil, goerr.New("no blame data found",
-			goerr.V("owner", owner),
-			goerr.V("repo", repo),
-			goerr.V("path", path),
+			goerr.V("owner", in.Owner),
+			goerr.V("repo", in.Repo),
+			goerr.V("path", in.Path),
 			goerr.V("ref", ref))
 	}
 
@@ -193,8 +186,8 @@ func (t *ToolSet) runGetBlame(ctx context.Context, args map[string]any) (map[str
 	}
 
 	return map[string]any{
-		"repository": fmt.Sprintf("%s/%s", owner, repo),
-		"path":       path,
+		"repository": fmt.Sprintf("%s/%s", in.Owner, in.Repo),
+		"path":       in.Path,
 		"ref":        ref,
 		"ranges":     ranges,
 		"count":      len(ranges),

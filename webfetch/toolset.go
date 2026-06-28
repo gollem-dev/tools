@@ -33,6 +33,13 @@ type ToolSet struct {
 	llmClient       gollem.LLMClient
 	maxContentBytes int64
 	allowPrivateIP  bool
+	tools           []gollem.Tool
+}
+
+// webFetchInput is the typed input for the web_fetch tool. The schema is inferred
+// from the struct tags, eliminating a separate hand-written parameter map.
+type webFetchInput struct {
+	URL string `json:"url" description:"The URL to fetch (http or https only)" required:"true"`
 }
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
@@ -113,7 +120,90 @@ func New(opts ...Option) (*ToolSet, error) {
 	if t.client == nil {
 		t.client = newGuardedClient(t.allowPrivateIP)
 	}
+
+	tools, err := t.buildTools()
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build webfetch tools")
+	}
+	t.tools = tools
+
 	return t, nil
+}
+
+// buildTools constructs the typed web_fetch tool. The input struct encodes the
+// schema, so there is no separate hand-written parameter map to drift from the
+// handler implementation.
+func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+	const toolDesc = "Fetch a web page and return its body. " +
+		"When LLM analysis is enabled, the body is reformatted as Markdown and " +
+		"screened for indirect prompt injection; otherwise the extracted text is " +
+		"returned verbatim."
+
+	tool, err := gollem.NewTool("web_fetch", toolDesc,
+		func(ctx context.Context, in webFetchInput) (map[string]any, error) {
+			if in.URL == "" {
+				return nil, goerr.New("url is required", goerr.V("args", map[string]any{"url": in.URL}))
+			}
+
+			parsed, err := url.Parse(in.URL)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to parse url", goerr.V("url", in.URL))
+			}
+			switch parsed.Scheme {
+			case "http", "https":
+				// accepted
+			default:
+				return nil, goerr.New("unsupported url scheme (only http/https are allowed)",
+					goerr.V("url", in.URL),
+					goerr.V("scheme", parsed.Scheme))
+			}
+			if parsed.Host == "" {
+				return nil, goerr.New("url is missing a host", goerr.V("url", in.URL))
+			}
+
+			status, contentType, body, err := t.fetch(ctx, in.URL)
+			if err != nil {
+				return nil, err
+			}
+
+			text, _, err := extractContent(contentType, body)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to extract body", goerr.V("url", in.URL))
+			}
+
+			if t.llmClient == nil {
+				// LLM analysis disabled: return the extracted text verbatim.
+				return map[string]any{
+					"result":       text,
+					"url":          in.URL,
+					"status":       status,
+					"content_type": contentType,
+					"llm_analysis": "disabled",
+				}, nil
+			}
+
+			result, err := analyzeContent(ctx, t.llmClient, text)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to analyze body", goerr.V("url", in.URL))
+			}
+
+			if result.Malicious {
+				return nil, goerr.New("indirect prompt injection detected in fetched body",
+					goerr.V("url", in.URL),
+					goerr.V("reason", result.Reason))
+			}
+
+			return map[string]any{
+				"result":       result.Markdown,
+				"url":          in.URL,
+				"status":       status,
+				"content_type": contentType,
+			}, nil
+		})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to build web_fetch tool")
+	}
+	return []gollem.Tool{tool}, nil
 }
 
 // Ping checks whether the configured dependencies are reachable. If an LLM
@@ -149,89 +239,21 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 
 // Specs returns the tool specifications exposed by this ToolSet.
 func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name: "web_fetch",
-			Description: "Fetch a web page and return its body. " +
-				"When LLM analysis is enabled, the body is reformatted as Markdown and " +
-				"screened for indirect prompt injection; otherwise the extracted text is " +
-				"returned verbatim.",
-			Parameters: map[string]*gollem.Parameter{
-				"url": {
-					Type:        gollem.TypeString,
-					Description: "The URL to fetch (http or https only)",
-					Required:    true,
-				},
-			},
-		},
-	}, nil
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
 }
 
-// Run dispatches tool calls. Only "web_fetch" is supported.
+// Run dispatches tool calls by name to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	if name != "web_fetch" {
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
+	for _, tool := range t.tools {
+		if tool.Spec().Name == name {
+			return tool.Run(ctx, args)
+		}
 	}
-
-	rawURL, ok := args["url"].(string)
-	if !ok || rawURL == "" {
-		return nil, goerr.New("url is required", goerr.V("args", args))
-	}
-
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to parse url", goerr.V("url", rawURL))
-	}
-	switch parsed.Scheme {
-	case "http", "https":
-		// accepted
-	default:
-		return nil, goerr.New("unsupported url scheme (only http/https are allowed)",
-			goerr.V("url", rawURL),
-			goerr.V("scheme", parsed.Scheme))
-	}
-	if parsed.Host == "" {
-		return nil, goerr.New("url is missing a host", goerr.V("url", rawURL))
-	}
-
-	status, contentType, body, err := t.fetch(ctx, rawURL)
-	if err != nil {
-		return nil, err
-	}
-
-	text, _, err := extractContent(contentType, body)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to extract body", goerr.V("url", rawURL))
-	}
-
-	if t.llmClient == nil {
-		// LLM analysis disabled: return the extracted text verbatim.
-		return map[string]any{
-			"result":       text,
-			"url":          rawURL,
-			"status":       status,
-			"content_type": contentType,
-			"llm_analysis": "disabled",
-		}, nil
-	}
-
-	result, err := analyzeContent(ctx, t.llmClient, text)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to analyze body", goerr.V("url", rawURL))
-	}
-
-	if result.Malicious {
-		return nil, goerr.New("indirect prompt injection detected in fetched body",
-			goerr.V("url", rawURL),
-			goerr.V("reason", result.Reason))
-	}
-
-	return map[string]any{
-		"result":       result.Markdown,
-		"url":          rawURL,
-		"status":       status,
-		"content_type": contentType,
-	}, nil
+	return nil, goerr.New("invalid function name", goerr.V("name", name))
 }
 
 // fetch performs the HTTP GET, enforcing the configured timeout and a body-size

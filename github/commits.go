@@ -8,42 +8,43 @@ import (
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func (t *ToolSet) runListCommits(ctx context.Context, args map[string]any) (map[string]any, error) {
-	owner, ok := args["owner"].(string)
-	if !ok || owner == "" {
-		return nil, goerr.New("owner is required")
-	}
+// listCommitsInput is the typed argument struct for github_list_commits.
+type listCommitsInput struct {
+	Owner   string `json:"owner" description:"Repository owner (organization or username)" required:"true" pattern:"^[a-zA-Z0-9][a-zA-Z0-9-]*$" minLength:"1" maxLength:"39"`
+	Repo    string `json:"repo" description:"Repository name" required:"true" pattern:"^[a-zA-Z0-9_.-]+$" minLength:"1" maxLength:"100"`
+	SHA     string `json:"sha" description:"SHA or branch to start listing commits from. Defaults to the default branch."`
+	Path    string `json:"path" description:"Only commits containing this file path will be returned (e.g., 'src/main.go')"`
+	Author  string `json:"author" description:"GitHub login or email address to filter commits by author"`
+	PerPage int    `json:"per_page" description:"Number of commits per page (default: 30, max: 100)"`
+	Page    int    `json:"page" description:"Page number for pagination (default: 1)"`
+}
 
-	repo, ok := args["repo"].(string)
-	if !ok || repo == "" {
-		return nil, goerr.New("repo is required")
-	}
-
+func (t *ToolSet) runListCommits(ctx context.Context, in listCommitsInput) (map[string]any, error) {
 	opts := &ghlib.CommitsListOptions{
 		ListOptions: ghlib.ListOptions{PerPage: 30},
 	}
 
-	if sha, ok := args["sha"].(string); ok && sha != "" {
-		opts.SHA = sha
+	if in.SHA != "" {
+		opts.SHA = in.SHA
 	}
-	if path, ok := args["path"].(string); ok && path != "" {
-		opts.Path = path
+	if in.Path != "" {
+		opts.Path = in.Path
 	}
-	if author, ok := args["author"].(string); ok && author != "" {
-		opts.Author = author
+	if in.Author != "" {
+		opts.Author = in.Author
 	}
-	if perPage, ok := args["per_page"].(float64); ok && perPage > 0 {
-		opts.PerPage = min(int(perPage), 100)
+	if in.PerPage > 0 {
+		opts.PerPage = min(in.PerPage, 100)
 	}
-	if page, ok := args["page"].(float64); ok && page > 0 {
-		opts.Page = int(page)
+	if in.Page > 0 {
+		opts.Page = in.Page
 	}
 
-	commits, _, err := t.client.ListCommits(ctx, owner, repo, opts)
+	commits, _, err := t.client.ListCommits(ctx, in.Owner, in.Repo, opts)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to list commits",
-			goerr.V("owner", owner),
-			goerr.V("repo", repo))
+			goerr.V("owner", in.Owner),
+			goerr.V("repo", in.Repo))
 	}
 
 	results := make([]CommitResult, 0, len(commits))
@@ -78,7 +79,7 @@ func (t *ToolSet) runListCommits(ctx context.Context, args map[string]any) (map[
 	}
 
 	return map[string]any{
-		"repository": fmt.Sprintf("%s/%s", owner, repo),
+		"repository": fmt.Sprintf("%s/%s", in.Owner, in.Repo),
 		"commits":    results,
 		"count":      len(results),
 	}, nil
