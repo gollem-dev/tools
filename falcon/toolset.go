@@ -120,10 +120,27 @@ type ToolSet struct {
 	maxFetchRecords int
 	pageTTL         time.Duration
 
-	tokens *tokenProvider
-	pages  *pageStore
-	tools  []gollem.Tool
+	tokens     *tokenProvider
+	pages      *pageStore
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[searchIncidentsInput, map[string]any]()
+	_ = gollem.MustToolSchema[getIncidentsInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchAlertsInput, map[string]any]()
+	_ = gollem.MustToolSchema[getAlertsInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchBehaviorsInput, map[string]any]()
+	_ = gollem.MustToolSchema[getBehaviorsInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchDevicesInput, map[string]any]()
+	_ = gollem.MustToolSchema[getDevicesInput, map[string]any]()
+	_ = gollem.MustToolSchema[getCrowdScoresInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchEventsInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -225,13 +242,21 @@ func New(clientID, clientSecret string, opts ...Option) (*ToolSet, error) {
 	t.tokens = newTokenProvider(t.clientID, t.clientSecret, t.baseURL, t.httpClient, t.logger)
 	t.pages = newPageStore(defaultMaxCachedQueries, t.pageTTL)
 
-	tools, err := t.buildTools()
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tools")
-	}
-	t.tools = tools
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
 
 	return t, nil
+}
+
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
 // Ping verifies connectivity and credentials by acquiring an OAuth2 token.
@@ -246,8 +271,11 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 // *ToolSet receiver and translates the typed input back into the args map
 // expected by the existing private search/get methods, preserving all
 // in-memory pagination logic and error messages unchanged.
-func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
-	toolSearchIncidents, err := gollem.NewTool("falcon_search_incidents",
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	toolSearchIncidents := gollem.MustNewTool("falcon_search_incidents",
 		"Search incidents using FQL (Falcon Query Language) filters and return full incident details (status, tactics, techniques, hosts, users). Results are paginated in memory; pass page_token for more.",
 		func(ctx context.Context, in searchIncidentsInput) (map[string]any, error) {
 			args := map[string]any{
@@ -258,21 +286,15 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.searchIncidents(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_search_incidents"))
-	}
 
-	toolGetIncidents, err := gollem.NewTool("falcon_get_incidents",
+	toolGetIncidents := gollem.MustNewTool("falcon_get_incidents",
 		"Get detailed information for specific incidents by their IDs. Returns full incident details including status, tactics, techniques, hosts, and users involved.",
 		func(ctx context.Context, in getIncidentsInput) (map[string]any, error) {
 			args := map[string]any{"ids": in.IDs}
 			return t.getIncidents(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_get_incidents"))
-	}
 
-	toolSearchAlerts, err := gollem.NewTool("falcon_search_alerts",
+	toolSearchAlerts := gollem.MustNewTool("falcon_search_alerts",
 		"Search and retrieve full alert details using FQL filters. Returns alert objects including severity, tactic, technique, and device info. Results are paginated in memory; pass page_token for more.",
 		func(ctx context.Context, in searchAlertsInput) (map[string]any, error) {
 			args := map[string]any{
@@ -283,21 +305,15 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.searchAlerts(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_search_alerts"))
-	}
 
-	toolGetAlerts, err := gollem.NewTool("falcon_get_alerts",
+	toolGetAlerts := gollem.MustNewTool("falcon_get_alerts",
 		"Get detailed alert information by composite IDs. Use this when you already have specific alert IDs.",
 		func(ctx context.Context, in getAlertsInput) (map[string]any, error) {
 			args := map[string]any{"composite_ids": in.CompositeIDs}
 			return t.getAlerts(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_get_alerts"))
-	}
 
-	toolSearchBehaviors, err := gollem.NewTool("falcon_search_behaviors",
+	toolSearchBehaviors := gollem.MustNewTool("falcon_search_behaviors",
 		"Search behaviors using FQL filters and return full behavior details (tactic, technique, severity, pattern, device info). Results are paginated in memory; pass page_token for more.",
 		func(ctx context.Context, in searchBehaviorsInput) (map[string]any, error) {
 			args := map[string]any{
@@ -307,21 +323,15 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.searchBehaviors(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_search_behaviors"))
-	}
 
-	toolGetBehaviors, err := gollem.NewTool("falcon_get_behaviors",
+	toolGetBehaviors := gollem.MustNewTool("falcon_get_behaviors",
 		"Get detailed behavior information by IDs. Returns behavior details including tactic, technique, severity, pattern, and associated device info.",
 		func(ctx context.Context, in getBehaviorsInput) (map[string]any, error) {
 			args := map[string]any{"ids": in.IDs}
 			return t.getBehaviors(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_get_behaviors"))
-	}
 
-	toolSearchDevices, err := gollem.NewTool("falcon_search_devices",
+	toolSearchDevices := gollem.MustNewTool("falcon_search_devices",
 		"Search devices (hosts) using FQL filters and return full host details (OS, IP addresses, sensor version, containment status). Results are paginated in memory; pass page_token for more.",
 		func(ctx context.Context, in searchDevicesInput) (map[string]any, error) {
 			args := map[string]any{
@@ -332,31 +342,22 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.searchDevices(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_search_devices"))
-	}
 
-	toolGetDevices, err := gollem.NewTool("falcon_get_devices",
+	toolGetDevices := gollem.MustNewTool("falcon_get_devices",
 		"Get detailed device (host) information by device IDs. Returns full host details including hostname, OS, IP addresses, sensor version, tags, and containment status.",
 		func(ctx context.Context, in getDevicesInput) (map[string]any, error) {
 			args := map[string]any{"ids": in.IDs}
 			return t.getDevices(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_get_devices"))
-	}
 
-	toolGetCrowdScores, err := gollem.NewTool("falcon_get_crowdscores",
+	toolGetCrowdScores := gollem.MustNewTool("falcon_get_crowdscores",
 		"Get CrowdScore values for the environment. CrowdScore is an overall threat level indicator.",
 		func(ctx context.Context, in getCrowdScoresInput) (map[string]any, error) {
 			args := map[string]any{"filter": in.Filter}
 			return t.getCrowdScores(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_get_crowdscores"))
-	}
 
-	toolSearchEvents, err := gollem.NewTool("falcon_search_events",
+	toolSearchEvents := gollem.MustNewTool("falcon_search_events",
 		"Search EDR telemetry events using CrowdStrike Query Language (CQL) via the Next-Gen SIEM Search API (process executions, network connections, file writes, DNS, etc.). The search runs asynchronously and is polled until ready. Results are paginated in memory; pass page_token for more.",
 		func(ctx context.Context, in searchEventsInput) (map[string]any, error) {
 			args := map[string]any{
@@ -368,9 +369,6 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.searchEvents(ctx, args)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Falcon tool", goerr.V("name", "falcon_search_events"))
-	}
 
 	return []gollem.Tool{
 		toolSearchIncidents,
@@ -383,7 +381,7 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 		toolGetDevices,
 		toolGetCrowdScores,
 		toolSearchEvents,
-	}, nil
+	}
 }
 
 // Specs returns the specifications for the ten Falcon tools.
@@ -397,12 +395,11 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 
 // Run executes the named Falcon tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	for _, tool := range t.tools {
-		if tool.Spec().Name == name {
-			return tool.Run(ctx, args)
-		}
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("unknown tool name", goerr.V("name", name))
 	}
-	return nil, goerr.New("unknown tool name", goerr.V("name", name))
+	return tool.Run(ctx, args)
 }
 
 // apiError represents an HTTP error from the CrowdStrike API.

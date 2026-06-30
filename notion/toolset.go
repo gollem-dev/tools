@@ -50,12 +50,22 @@ const (
 // ToolSet implements gollem.ToolSet for reading from Notion. Fields are
 // unexported; configure via Option.
 type ToolSet struct {
-	token   string
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
-	tools   []gollem.Tool
+	token      string
+	baseURL    string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[searchInput, map[string]any]()
+	_ = gollem.MustToolSchema[getPageInput, map[string]any]()
+	_ = gollem.MustToolSchema[queryDatabaseInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -110,29 +120,35 @@ func New(token string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
-	tools, err := t.buildTools()
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Notion tools")
-	}
-	t.tools = tools
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
 
 	return t, nil
 }
 
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
+}
+
 // buildTools constructs the typed Notion tools. Each tool has its own input
 // struct because their argument shapes differ.
-func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
-	searchTool, err := gollem.NewTool(
+// MustNewTool is used because the In/Out types are static: a build failure is a programming error (already guarded by the package-level MustToolSchema), not a runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	searchTool := gollem.MustNewTool(
 		toolSearch,
 		"Search Notion pages and databases shared with the integration. "+
 			"Matches titles against the query string. Returns id, type (page or database), title, URL, and last edited timestamp.",
 		t.runSearch,
 	)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build search tool", goerr.V("name", toolSearch))
-	}
 
-	getPageTool, err := gollem.NewTool(
+	getPageTool := gollem.MustNewTool(
 		toolGetPage,
 		"Retrieve a Notion page's full content as Notion-flavored Markdown. "+
 			"The integration must have access to the page. Returns the markdown body, a 'truncated' flag "+
@@ -140,11 +156,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			"subtrees were omitted when truncated; pass any of them as page_id to fetch the missing subtree).",
 		t.runGetPage,
 	)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build get-page tool", goerr.V("name", toolGetPage))
-	}
 
-	queryDatabaseTool, err := gollem.NewTool(
+	queryDatabaseTool := gollem.MustNewTool(
 		toolQueryDatabase,
 		"Query the rows (pages) of a Notion database shared with the integration. "+
 			"Uses the legacy database query API (Notion-Version 2022-06-28); databases created under the "+
@@ -153,11 +166,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			"properties (title, text, number, select, multi_select, date, checkbox, url, email, phone, etc.).",
 		t.runQueryDatabase,
 	)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build query-database tool", goerr.V("name", toolQueryDatabase))
-	}
 
-	return []gollem.Tool{searchTool, getPageTool, queryDatabaseTool}, nil
+	return []gollem.Tool{searchTool, getPageTool, queryDatabaseTool}
 }
 
 // Specs returns the Notion tool specifications.
@@ -171,12 +181,11 @@ func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
 
 // Run dispatches to the named Notion tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	for _, tool := range t.tools {
-		if tool.Spec().Name == name {
-			return tool.Run(ctx, args)
-		}
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-	return nil, goerr.New("invalid function name", goerr.V("name", name))
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by issuing a minimal search.

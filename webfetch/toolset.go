@@ -34,6 +34,7 @@ type ToolSet struct {
 	maxContentBytes int64
 	allowPrivateIP  bool
 	tools           []gollem.Tool
+	toolByName      map[string]gollem.Tool
 }
 
 // webFetchInput is the typed input for the web_fetch tool. The schema is inferred
@@ -41,6 +42,13 @@ type ToolSet struct {
 type webFetchInput struct {
 	URL string `json:"url" description:"The URL to fetch (http or https only)" required:"true"`
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[webFetchInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -121,25 +129,34 @@ func New(opts ...Option) (*ToolSet, error) {
 		t.client = newGuardedClient(t.allowPrivateIP)
 	}
 
-	tools, err := t.buildTools()
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build webfetch tools")
-	}
-	t.tools = tools
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
 
 	return t, nil
+}
+
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
 // buildTools constructs the typed web_fetch tool. The input struct encodes the
 // schema, so there is no separate hand-written parameter map to drift from the
 // handler implementation.
-func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
+// MustNewTool is used because the In/Out types are static: a build failure is a programming error (already guarded by the package-level MustToolSchema), not a runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
 	const toolDesc = "Fetch a web page and return its body. " +
 		"When LLM analysis is enabled, the body is reformatted as Markdown and " +
 		"screened for indirect prompt injection; otherwise the extracted text is " +
 		"returned verbatim."
 
-	tool, err := gollem.NewTool("web_fetch", toolDesc,
+	tool := gollem.MustNewTool("web_fetch", toolDesc,
 		func(ctx context.Context, in webFetchInput) (map[string]any, error) {
 			if in.URL == "" {
 				return nil, goerr.New("url is required", goerr.V("args", map[string]any{"url": in.URL}))
@@ -200,10 +217,7 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 				"content_type": contentType,
 			}, nil
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build web_fetch tool")
-	}
-	return []gollem.Tool{tool}, nil
+	return []gollem.Tool{tool}
 }
 
 // Ping checks whether the configured dependencies are reachable. If an LLM
@@ -248,12 +262,11 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 
 // Run dispatches tool calls by name to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	for _, tool := range t.tools {
-		if tool.Spec().Name == name {
-			return tool.Run(ctx, args)
-		}
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-	return nil, goerr.New("invalid function name", goerr.V("name", name))
+	return tool.Run(ctx, args)
 }
 
 // fetch performs the HTTP GET, enforcing the configured timeout and a body-size
