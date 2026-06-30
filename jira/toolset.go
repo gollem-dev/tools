@@ -32,13 +32,23 @@ const httpTimeout = 30 * time.Second
 // ToolSet implements gollem.ToolSet for read-only Jira Cloud access. Fields are
 // unexported; configure via Option.
 type ToolSet struct {
-	baseURL  string
-	email    string
-	apiToken string
-	client   *http.Client
-	logger   *slog.Logger
-	tools    []gollem.Tool
+	baseURL    string
+	email      string
+	apiToken   string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[listProjectsInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchIssuesInput, map[string]any]()
+	_ = gollem.MustToolSchema[getIssuesInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -98,13 +108,21 @@ func New(baseURL, email, apiToken string, opts ...Option) (*ToolSet, error) {
 		opt(t)
 	}
 
-	tools, err := t.buildTools()
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build Jira tools")
-	}
-	t.tools = tools
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
 
 	return t, nil
+}
+
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
 // Tool names exposed by this ToolSet.
@@ -117,40 +135,32 @@ const (
 // buildTools constructs the typed Jira tools. Each tool has its own input
 // struct so the schema is the single source of truth — no hand-written
 // parameter map to drift from the Run implementation.
-func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
-	listProjects, err := gollem.NewTool(toolListProjects,
+// MustNewTool is used because the In/Out types are static: a build failure is a programming error (already guarded by the package-level MustToolSchema), not a runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	listProjects := gollem.MustNewTool(toolListProjects,
 		"List Jira projects accessible to the authenticated account. "+
 			"Returns id, key, name, project type, and lead for each project, with pagination.",
 		func(ctx context.Context, in listProjectsInput) (map[string]any, error) {
 			return t.listProjects(ctx, in)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", toolListProjects))
-	}
 
-	searchIssues, err := gollem.NewTool(toolSearchIssues,
+	searchIssues := gollem.MustNewTool(toolSearchIssues,
 		"Search Jira issues using JQL (Jira Query Language). "+
 			"Returns key, summary, status, issue type, assignee, priority, and last-updated time for each match, with pagination. "+
 			"Use jira_get_issues to fetch the full content of matched issues.",
 		func(ctx context.Context, in searchIssuesInput) (map[string]any, error) {
 			return t.searchIssues(ctx, in)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", toolSearchIssues))
-	}
 
-	getIssues, err := gollem.NewTool(toolGetIssues,
+	getIssues := gollem.MustNewTool(toolGetIssues,
 		"Fetch the full content of one or more Jira issues by key or id (batched in a single request). "+
 			"Each issue's description (and optionally its comments) is returned as Markdown. "+
 			"Keys that cannot be resolved are reported in not_found.",
 		func(ctx context.Context, in getIssuesInput) (map[string]any, error) {
 			return t.getIssues(ctx, in)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", toolGetIssues))
-	}
 
-	return []gollem.Tool{listProjects, searchIssues, getIssues}, nil
+	return []gollem.Tool{listProjects, searchIssues, getIssues}
 }
 
 // Specs returns the Jira tool specifications, derived from the typed tools.
@@ -164,12 +174,11 @@ func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
 
 // Run executes the named Jira tool by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	for _, tool := range t.tools {
-		if tool.Spec().Name == name {
-			return tool.Run(ctx, args)
-		}
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-	return nil, goerr.New("invalid function name", goerr.V("name", name))
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by fetching the current user.

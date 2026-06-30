@@ -24,13 +24,14 @@ const (
 // ToolSet implements gollem.ToolSet for urlscan.io. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
-	apiKey  string
-	baseURL string
-	backoff time.Duration
-	timeout time.Duration
-	client  *http.Client
-	logger  *slog.Logger
-	tools   []gollem.Tool
+	apiKey     string
+	baseURL    string
+	backoff    time.Duration
+	timeout    time.Duration
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
 
 // scanInput is the typed argument struct for urlscan_scan. The schema and
@@ -39,6 +40,11 @@ type ToolSet struct {
 type scanInput struct {
 	URL string `json:"url" description:"The URL to scan" required:"true"`
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var _ = gollem.MustToolSchema[scanInput, map[string]any]()
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -113,18 +119,29 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
-	tools, err := t.buildTools()
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build urlscan tools")
-	}
-	t.tools = tools
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
 
 	return t, nil
 }
 
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
+}
+
 // buildTools constructs the typed urlscan tool.
-func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
-	tool, err := gollem.NewTool("urlscan_scan", "Scan a URL with urlscan.io to analyse its content and behaviour.",
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	tool := gollem.MustNewTool("urlscan_scan", "Scan a URL with urlscan.io to analyse its content and behaviour.",
 		func(ctx context.Context, in scanInput) (map[string]any, error) {
 			if in.URL == "" {
 				return nil, goerr.New("url parameter is required", goerr.V("url", in.URL))
@@ -134,10 +151,7 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.scan(ctx, in.URL)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "urlscan_scan"))
-	}
-	return []gollem.Tool{tool}, nil
+	return []gollem.Tool{tool}
 }
 
 // Specs returns the urlscan tool specifications, derived from the typed tools.
@@ -151,12 +165,11 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 
 // Run executes the named urlscan tool by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	for _, tool := range t.tools {
-		if tool.Spec().Name == name {
-			return tool.Run(ctx, args)
-		}
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-	return nil, goerr.New("invalid function name", goerr.V("name", name))
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by performing a minimal

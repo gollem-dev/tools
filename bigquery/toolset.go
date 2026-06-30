@@ -41,9 +41,10 @@ type ToolSet struct {
 	logger                    *slog.Logger
 
 	// Populated during New:
-	configs  []*Config
-	runbooks map[RunbookID]*RunbookEntry
-	tools    []gollem.Tool
+	configs    []*Config
+	runbooks   map[RunbookID]*RunbookEntry
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 
 	// Overridable for testing:
 	clientFactory bigQueryClientFactory
@@ -59,9 +60,13 @@ type queryInput struct {
 }
 
 // resultInput is the typed input for bigquery_result.
+//
+// Limit is a *int, not an int, so an omitted value (nil -> default 100) stays
+// distinguishable from an explicit 0. Collapsing them would silently turn a
+// caller-supplied limit:0 into 100, changing the result set.
 type resultInput struct {
 	QueryID string `json:"query_id" description:"The ID of the query to get results for" required:"true"`
-	Limit   int    `json:"limit" description:"Maximum number of rows to return"`
+	Limit   *int   `json:"limit" description:"Maximum number of rows to return (default 100 when omitted)"`
 	Offset  int    `json:"offset" description:"Number of rows to skip"`
 }
 
@@ -83,6 +88,18 @@ type schemaInput struct {
 type runbookEntryInput struct {
 	RunbookID string `json:"runbook_id" description:"The ID of the runbook entry to retrieve" required:"true"`
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[listDatasetInput, map[string]any]()
+	_ = gollem.MustToolSchema[queryInput, map[string]any]()
+	_ = gollem.MustToolSchema[resultInput, map[string]any]()
+	_ = gollem.MustToolSchema[tableSummaryInput, map[string]any]()
+	_ = gollem.MustToolSchema[schemaInput, map[string]any]()
+	_ = gollem.MustToolSchema[runbookEntryInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -204,13 +221,21 @@ func New(projectID string, opts ...Option) (*ToolSet, error) {
 		}
 	}
 
-	tools, err := t.buildTools()
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build BigQuery tools")
-	}
-	t.tools = tools
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
 
 	return t, nil
+}
+
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
 // Ping verifies connectivity by creating a BigQuery client. If the underlying
@@ -259,19 +284,20 @@ func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
 
 // Run dispatches to the matching typed tool by name.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	for _, tool := range t.tools {
-		if tool.Spec().Name == name {
-			return tool.Run(ctx, args)
-		}
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-	return nil, goerr.New("invalid function name", goerr.V("name", name))
+	return tool.Run(ctx, args)
 }
 
 // buildTools constructs the typed BigQuery tools. Each tool has a distinct input
 // struct so its schema is the single source of truth for both spec generation and
-// argument decoding.
-func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
-	listDataset, err := gollem.NewTool("bigquery_list_dataset",
+// argument decoding. MustNewTool is used because the In/Out types are static: a
+// build failure is a programming error (already guarded by the package-level
+// MustToolSchema), not a runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	listDataset := gollem.MustNewTool("bigquery_list_dataset",
 		"List available BigQuery datasets, tables and partial schema that is necessary for investigation",
 		func(ctx context.Context, in listDatasetInput) (map[string]any, error) {
 			if len(t.configs) == 0 {
@@ -279,11 +305,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.listDatasets()
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_list_dataset"))
-	}
 
-	queryTool, err := gollem.NewTool("bigquery_query",
+	queryTool := gollem.MustNewTool("bigquery_query",
 		bigqueryQueryPrompt(t.scanLimitStr),
 		func(ctx context.Context, in queryInput) (map[string]any, error) {
 			if in.Query == "" {
@@ -303,11 +326,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			defer safeClose(t.logger, client)
 			return t.executeQuery(ctx, client, in.Query)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_query"))
-	}
 
-	resultTool, err := gollem.NewTool("bigquery_result",
+	resultTool := gollem.MustNewTool("bigquery_result",
 		"Get the results of a previously executed query. Returns rows as JSON string in 'rows_json' field due to Vertex AI type limitations.",
 		func(ctx context.Context, in resultInput) (map[string]any, error) {
 			if in.QueryID == "" {
@@ -316,9 +336,9 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			if len(t.configs) == 0 {
 				return nil, goerr.New("no BigQuery configuration loaded; use WithConfigFiles")
 			}
-			limit := in.Limit
-			if limit <= 0 {
-				limit = 100
+			limit := 100
+			if in.Limit != nil {
+				limit = *in.Limit
 			}
 			opts, err := t.clientOptions(ctx)
 			if err != nil {
@@ -331,11 +351,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			defer safeClose(t.logger, client)
 			return t.getQueryResults(ctx, client, in.QueryID, limit, in.Offset)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_result"))
-	}
 
-	tableSummaryTool, err := gollem.NewTool("bigquery_table_summary",
+	tableSummaryTool := gollem.MustNewTool("bigquery_table_summary",
 		"Get a summary of available BigQuery tables including all fields, examples, and descriptions",
 		func(ctx context.Context, in tableSummaryInput) (map[string]any, error) {
 			if len(t.configs) == 0 {
@@ -343,11 +360,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.getTableSummary(in.ProjectID, in.DatasetID, in.TableID)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_table_summary"))
-	}
 
-	schemaTool, err := gollem.NewTool("bigquery_schema",
+	schemaTool := gollem.MustNewTool("bigquery_schema",
 		"Get detailed schema information for a specific BigQuery table",
 		func(ctx context.Context, in schemaInput) (map[string]any, error) {
 			if in.ProjectID == "" {
@@ -373,11 +387,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.getTableSchema(ctx, in.ProjectID, in.DatasetID, in.TableID)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "bigquery_schema"))
-	}
 
-	runbookTool, err := gollem.NewTool("get_runbook_entry",
+	runbookTool := gollem.MustNewTool("get_runbook_entry",
 		"Get a specific runbook entry by its ID. Returns the SQL content and description of the runbook.",
 		func(ctx context.Context, in runbookEntryInput) (map[string]any, error) {
 			if in.RunbookID == "" {
@@ -385,11 +396,8 @@ func (t *ToolSet) buildTools() ([]gollem.Tool, error) {
 			}
 			return t.getRunbookEntry(in.RunbookID)
 		})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to build tool", goerr.V("name", "get_runbook_entry"))
-	}
 
-	return []gollem.Tool{listDataset, queryTool, resultTool, tableSummaryTool, schemaTool, runbookTool}, nil
+	return []gollem.Tool{listDataset, queryTool, resultTool, tableSummaryTool, schemaTool, runbookTool}
 }
 
 // clientOptions returns the google API client options derived from credentials
