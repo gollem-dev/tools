@@ -5,25 +5,12 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/gollem-dev/gollem"
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func getPageSpec() gollem.ToolSpec {
-	return gollem.ToolSpec{
-		Name: toolGetPage,
-		Description: "Retrieve a Notion page's full content as Notion-flavored Markdown. " +
-			"The integration must have access to the page. Returns the markdown body, a 'truncated' flag " +
-			"(true when the page exceeds Notion's render limits), and 'unknown_block_ids' (the block IDs whose " +
-			"subtrees were omitted when truncated; pass any of them as page_id to fetch the missing subtree).",
-		Parameters: map[string]*gollem.Parameter{
-			"page_id": {
-				Type:        gollem.TypeString,
-				Description: "The Notion page ID (with or without dashes).",
-				Required:    true,
-			},
-		},
-	}
+// getPageInput is the typed argument for notion_get_page.
+type getPageInput struct {
+	PageID string `json:"page_id" description:"The Notion page ID (with or without dashes)." required:"true"`
 }
 
 // markdownResponse is the JSON shape returned by GET /v1/pages/{id}/markdown.
@@ -36,20 +23,19 @@ type markdownResponse struct {
 	UnknownBlockIDs []string `json:"unknown_block_ids"`
 }
 
-func (t *ToolSet) getPage(ctx context.Context, args map[string]any) (map[string]any, error) {
-	pageID, _ := args["page_id"].(string)
-	if pageID == "" {
+func (t *ToolSet) runGetPage(ctx context.Context, in getPageInput) (map[string]any, error) {
+	if in.PageID == "" {
 		return nil, goerr.New("page_id is required")
 	}
 
 	// PathEscape: page_id arrives from LLM tool args, so guard against accidental
 	// slashes / spaces / non-UUID characters that would break the URL or escape
 	// the /v1/pages/ scope.
-	path := "/v1/pages/" + url.PathEscape(pageID) + "/markdown"
+	path := "/v1/pages/" + url.PathEscape(in.PageID) + "/markdown"
 
 	var resp markdownResponse
 	if err := t.doJSON(ctx, http.MethodGet, path, markdownAPIVersion, nil, &resp); err != nil {
-		return nil, goerr.Wrap(err, "failed to fetch notion page markdown", goerr.V("page_id", pageID))
+		return nil, goerr.Wrap(err, "failed to fetch notion page markdown", goerr.V("page_id", in.PageID))
 	}
 
 	unknownBlockIDs := resp.UnknownBlockIDs
@@ -58,7 +44,7 @@ func (t *ToolSet) getPage(ctx context.Context, args map[string]any) (map[string]
 	}
 
 	return map[string]any{
-		"page_id":           pageID,
+		"page_id":           in.PageID,
 		"markdown":          resp.Markdown,
 		"truncated":         resp.Truncated,
 		"unknown_block_ids": unknownBlockIDs,

@@ -12,22 +12,19 @@ import (
 // agent is not overwhelmed by giant diffs.
 const maxPatchBytes = 20000
 
-// parseRepoNumber extracts and validates the owner/repo/number arguments shared
-// by github_get_issue and github_get_pull_request.
-func parseRepoNumber(args map[string]any) (owner, repo string, number int, err error) {
-	owner, ok := args["owner"].(string)
-	if !ok || owner == "" {
-		return "", "", 0, goerr.New("owner is required")
-	}
-	repo, ok = args["repo"].(string)
-	if !ok || repo == "" {
-		return "", "", 0, goerr.New("repo is required")
-	}
-	num, ok := args["number"].(float64)
-	if !ok || num < 1 {
-		return "", "", 0, goerr.New("number is required and must be a positive integer")
-	}
-	return owner, repo, int(num), nil
+// getIssueInput is the typed argument struct for github_get_issue.
+type getIssueInput struct {
+	Owner  string `json:"owner" description:"Repository owner (organization or username)" required:"true" pattern:"^[a-zA-Z0-9][a-zA-Z0-9-]*$" minLength:"1" maxLength:"39"`
+	Repo   string `json:"repo" description:"Repository name" required:"true" pattern:"^[a-zA-Z0-9_.-]+$" minLength:"1" maxLength:"100"`
+	Number int    `json:"number" description:"Issue number (positive integer)" required:"true" min:"1"`
+}
+
+// getPullRequestInput is the typed argument struct for github_get_pull_request.
+type getPullRequestInput struct {
+	Owner        string `json:"owner" description:"Repository owner (organization or username)" required:"true" pattern:"^[a-zA-Z0-9][a-zA-Z0-9-]*$" minLength:"1" maxLength:"39"`
+	Repo         string `json:"repo" description:"Repository name" required:"true" pattern:"^[a-zA-Z0-9_.-]+$" minLength:"1" maxLength:"100"`
+	Number       int    `json:"number" description:"Pull request number (positive integer)" required:"true" min:"1"`
+	IncludeFiles bool   `json:"include_files" description:"When true, include changed files with status, additions, deletions, and patch. Defaults to false."`
 }
 
 // collectIssueComments fetches every comment page for an issue or pull request.
@@ -66,31 +63,26 @@ func (t *ToolSet) collectIssueComments(ctx context.Context, owner, repo string, 
 	return out, nil
 }
 
-func (t *ToolSet) runGetIssue(ctx context.Context, args map[string]any) (map[string]any, error) {
-	owner, repo, number, err := parseRepoNumber(args)
-	if err != nil {
-		return nil, err
-	}
-
-	issue, _, err := t.client.GetIssue(ctx, owner, repo, number)
+func (t *ToolSet) runGetIssue(ctx context.Context, in getIssueInput) (map[string]any, error) {
+	issue, _, err := t.client.GetIssue(ctx, in.Owner, in.Repo, in.Number)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to get issue",
-			goerr.V("owner", owner), goerr.V("repo", repo), goerr.V("number", number))
+			goerr.V("owner", in.Owner), goerr.V("repo", in.Repo), goerr.V("number", in.Number))
 	}
 	// Issues.Get also returns pull requests; steer callers to the PR tool so the
 	// issue-shaped response does not hide PR-only fields (reviews, diff, refs).
 	if issue.IsPullRequest() {
 		return nil, goerr.New("this number is a pull request; use github_get_pull_request instead",
-			goerr.V("owner", owner), goerr.V("repo", repo), goerr.V("number", number))
+			goerr.V("owner", in.Owner), goerr.V("repo", in.Repo), goerr.V("number", in.Number))
 	}
 
-	comments, err := t.collectIssueComments(ctx, owner, repo, number)
+	comments, err := t.collectIssueComments(ctx, in.Owner, in.Repo, in.Number)
 	if err != nil {
 		return nil, err
 	}
 
 	result := IssueDetailResult{
-		Number:   number,
+		Number:   in.Number,
 		Labels:   labelNames(issue.Labels),
 		Comments: comments,
 	}
@@ -135,30 +127,24 @@ func (t *ToolSet) runGetIssue(ctx context.Context, args map[string]any) (map[str
 	}, nil
 }
 
-func (t *ToolSet) runGetPullRequest(ctx context.Context, args map[string]any) (map[string]any, error) {
-	owner, repo, number, err := parseRepoNumber(args)
-	if err != nil {
-		return nil, err
-	}
-	includeFiles, _ := args["include_files"].(bool)
-
-	pr, _, err := t.client.GetPullRequest(ctx, owner, repo, number)
+func (t *ToolSet) runGetPullRequest(ctx context.Context, in getPullRequestInput) (map[string]any, error) {
+	pr, _, err := t.client.GetPullRequest(ctx, in.Owner, in.Repo, in.Number)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to get pull request",
-			goerr.V("owner", owner), goerr.V("repo", repo), goerr.V("number", number))
+			goerr.V("owner", in.Owner), goerr.V("repo", in.Repo), goerr.V("number", in.Number))
 	}
 
-	comments, err := t.collectIssueComments(ctx, owner, repo, number)
+	comments, err := t.collectIssueComments(ctx, in.Owner, in.Repo, in.Number)
 	if err != nil {
 		return nil, err
 	}
-	reviews, err := t.collectReviews(ctx, owner, repo, number)
+	reviews, err := t.collectReviews(ctx, in.Owner, in.Repo, in.Number)
 	if err != nil {
 		return nil, err
 	}
 
 	result := PullRequestDetailResult{
-		Number:   number,
+		Number:   in.Number,
 		Labels:   labelNames(pr.Labels),
 		Comments: comments,
 		Reviews:  reviews,
@@ -201,8 +187,8 @@ func (t *ToolSet) runGetPullRequest(ctx context.Context, args map[string]any) (m
 		result.ClosedAt = &closed
 	}
 
-	if includeFiles {
-		files, err := t.collectFiles(ctx, owner, repo, number)
+	if in.IncludeFiles {
+		files, err := t.collectFiles(ctx, in.Owner, in.Repo, in.Number)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +213,7 @@ func (t *ToolSet) runGetPullRequest(ctx context.Context, args map[string]any) (m
 		"comments":   result.Comments,
 		"reviews":    result.Reviews,
 	}
-	if includeFiles {
+	if in.IncludeFiles {
 		out["files"] = result.Files
 	}
 	return out, nil

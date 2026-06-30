@@ -24,13 +24,27 @@ const (
 // ToolSet implements gollem.ToolSet for urlscan.io. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
-	apiKey  string
-	baseURL string
-	backoff time.Duration
-	timeout time.Duration
-	client  *http.Client
-	logger  *slog.Logger
+	apiKey     string
+	baseURL    string
+	backoff    time.Duration
+	timeout    time.Duration
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// scanInput is the typed argument struct for urlscan_scan. The schema and
+// runtime decode are inferred from the struct tags, eliminating the need for a
+// separate hand-written parameter map.
+type scanInput struct {
+	URL string `json:"url" description:"The URL to scan" required:"true"`
+}
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var _ = gollem.MustToolSchema[scanInput, map[string]any]()
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -105,44 +119,57 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
 }
 
-// Specs returns the urlscan tool specifications.
-func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "urlscan_scan",
-			Description: "Scan a URL with urlscan.io to analyse its content and behaviour.",
-			Parameters: map[string]*gollem.Parameter{
-				"url": {
-					Type:        gollem.TypeString,
-					Description: "The URL to scan",
-					Required:    true,
-				},
-			},
-		},
-	}, nil
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
-// Run executes the named urlscan tool.
+// buildTools constructs the typed urlscan tool.
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	tool := gollem.MustNewTool("urlscan_scan", "Scan a URL with urlscan.io to analyse its content and behaviour.",
+		func(ctx context.Context, in scanInput) (map[string]any, error) {
+			if in.URL == "" {
+				return nil, goerr.New("url parameter is required", goerr.V("url", in.URL))
+			}
+			if _, err := url.Parse(in.URL); err != nil {
+				return nil, goerr.Wrap(err, "invalid URL", goerr.V("url", in.URL))
+			}
+			return t.scan(ctx, in.URL)
+		})
+	return []gollem.Tool{tool}
+}
+
+// Specs returns the urlscan tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named urlscan tool by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "urlscan_scan":
-		// valid
-	default:
+	tool, ok := t.toolByName[name]
+	if !ok {
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-
-	urlStr, ok := args["url"].(string)
-	if !ok || urlStr == "" {
-		return nil, goerr.New("url parameter is required", goerr.V("args", args))
-	}
-	if _, err := url.Parse(urlStr); err != nil {
-		return nil, goerr.Wrap(err, "invalid URL", goerr.V("url", urlStr))
-	}
-
-	return t.scan(ctx, urlStr)
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by performing a minimal

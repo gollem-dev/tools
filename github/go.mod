@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.18.0
-	github.com/gollem-dev/gollem v0.26.0
+	github.com/gollem-dev/gollem v0.26.2-0.20260628032704-8a4e4f2abafd
 	github.com/google/go-github/v74 v74.0.0
 	github.com/m-mizutani/goerr/v2 v2.0.1
 	github.com/m-mizutani/gt v0.2.1

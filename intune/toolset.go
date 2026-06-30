@@ -40,12 +40,32 @@ type ToolSet struct {
 	tokenEndpoint string
 	client        *http.Client
 	logger        *slog.Logger
+	tools         []gollem.Tool
+	toolByName    map[string]gollem.Tool
 
 	// Token cache — guarded by mu.
 	mu          sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
 }
+
+// devicesByUserInput holds the typed arguments for the intune_devices_by_user tool.
+type devicesByUserInput struct {
+	UserPrincipalName string `json:"user_principal_name" description:"User's email address or UPN" required:"true"`
+}
+
+// devicesByHostnameInput holds the typed arguments for the intune_devices_by_hostname tool.
+type devicesByHostnameInput struct {
+	DeviceName string `json:"device_name" description:"Device hostname to search" required:"true"`
+}
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[devicesByUserInput, map[string]any]()
+	_ = gollem.MustToolSchema[devicesByHostnameInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -121,57 +141,70 @@ func New(tenantID string, clientID string, clientSecret string, opts ...Option) 
 		t.tokenEndpoint = fmt.Sprintf(defaultTokenEndpointFmt, t.tenantID)
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
 }
 
-// Specs returns the Intune tool specifications.
-func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "intune_devices_by_user",
-			Description: "Search Intune managed devices by user email address or UPN (User Principal Name). Returns device details including compliance state, OS, encryption, and recent sign-in IP history.",
-			Parameters: map[string]*gollem.Parameter{
-				"user_principal_name": {
-					Type:        gollem.TypeString,
-					Description: "User's email address or UPN",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "intune_devices_by_hostname",
-			Description: "Search Intune managed device by device hostname. Returns device details including compliance state, OS, encryption, and owner information.",
-			Parameters: map[string]*gollem.Parameter{
-				"device_name": {
-					Type:        gollem.TypeString,
-					Description: "Device hostname to search",
-					Required:    true,
-				},
-			},
-		},
-	}, nil
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
-// Run executes the named Intune tool.
+// buildTools constructs the typed Intune tools. Each tool has a distinct input
+// struct so schema and Run decode share a single source of truth.
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	toolByUser := gollem.MustNewTool(
+		"intune_devices_by_user",
+		"Search Intune managed devices by user email address or UPN (User Principal Name). Returns device details including compliance state, OS, encryption, and recent sign-in IP history.",
+		func(ctx context.Context, in devicesByUserInput) (map[string]any, error) {
+			if in.UserPrincipalName == "" {
+				return nil, goerr.New("user_principal_name is required", goerr.V("args", in))
+			}
+			return t.searchDevicesByUser(ctx, in.UserPrincipalName)
+		},
+	)
+
+	toolByHostname := gollem.MustNewTool(
+		"intune_devices_by_hostname",
+		"Search Intune managed device by device hostname. Returns device details including compliance state, OS, encryption, and owner information.",
+		func(ctx context.Context, in devicesByHostnameInput) (map[string]any, error) {
+			if in.DeviceName == "" {
+				return nil, goerr.New("device_name is required", goerr.V("args", in))
+			}
+			return t.searchDevicesByHostname(ctx, in.DeviceName)
+		},
+	)
+
+	return []gollem.Tool{toolByUser, toolByHostname}
+}
+
+// Specs returns the Intune tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named Intune tool by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "intune_devices_by_user":
-		upn, ok := args["user_principal_name"].(string)
-		if !ok || upn == "" {
-			return nil, goerr.New("user_principal_name is required", goerr.V("args", args))
-		}
-		return t.searchDevicesByUser(ctx, upn)
-
-	case "intune_devices_by_hostname":
-		deviceName, ok := args["device_name"].(string)
-		if !ok || deviceName == "" {
-			return nil, goerr.New("device_name is required", goerr.V("args", args))
-		}
-		return t.searchDevicesByHostname(ctx, deviceName)
-
-	default:
+	tool, ok := t.toolByName[name]
+	if !ok {
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies credentials by acquiring an OAuth access token.

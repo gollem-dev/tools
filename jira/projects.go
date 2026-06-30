@@ -6,33 +6,16 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/gollem-dev/gollem"
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func listProjectsSpec() gollem.ToolSpec {
-	return gollem.ToolSpec{
-		Name: toolListProjects,
-		Description: "List Jira projects accessible to the authenticated account. " +
-			"Returns id, key, name, project type, and lead for each project, with pagination.",
-		Parameters: map[string]*gollem.Parameter{
-			"query": {
-				Type:        gollem.TypeString,
-				Description: "Filter projects whose name or key contains this substring. Omit to list all accessible projects.",
-				Required:    false,
-			},
-			"max_results": {
-				Type:        gollem.TypeInteger,
-				Description: "Number of projects to return (1-50, default 50).",
-				Required:    false,
-			},
-			"start_at": {
-				Type:        gollem.TypeInteger,
-				Description: "Zero-based index of the first project to return, for pagination. Default 0.",
-				Required:    false,
-			},
-		},
-	}
+// listProjectsInput is the typed argument for the jira_list_projects tool.
+// The schema is inferred from the struct tags, so there is no separate
+// hand-written parameter map to drift from the Run implementation.
+type listProjectsInput struct {
+	Query      string `json:"query" description:"Filter projects whose name or key contains this substring. Omit to list all accessible projects."`
+	MaxResults int    `json:"max_results" description:"Number of projects to return (1-50, default 50)."`
+	StartAt    int    `json:"start_at" description:"Zero-based index of the first project to return, for pagination. Default 0."`
 }
 
 // projectSearchResponse mirrors the relevant fields of GET /rest/api/3/project/search.
@@ -52,19 +35,19 @@ type jiraProject struct {
 	} `json:"lead"`
 }
 
-func (t *ToolSet) listProjects(ctx context.Context, args map[string]any) (map[string]any, error) {
-	maxResults := clampInt(args["max_results"], 50, 1, 50)
-	// start_at defaults to 0; clampInt with def=0 yields 0 whether the arg is
+func (t *ToolSet) listProjects(ctx context.Context, in listProjectsInput) (map[string]any, error) {
+	maxResults := clampInt(in.MaxResults, 50, 1, 50)
+	// startAt defaults to 0; clampInt with def=0 yields 0 whether the arg is
 	// absent or explicitly zero, which is exactly the desired first-page behaviour.
-	startAt := clampInt(args["start_at"], 0, 0, 1<<30)
+	startAt := clampInt(in.StartAt, 0, 0, 1<<30)
 
 	q := url.Values{}
 	q.Set("maxResults", strconv.Itoa(maxResults))
 	q.Set("startAt", strconv.Itoa(startAt))
 	// expand the lead so the result can report who owns each project.
 	q.Set("expand", "lead")
-	if v, ok := args["query"].(string); ok && v != "" {
-		q.Set("query", v)
+	if in.Query != "" {
+		q.Set("query", in.Query)
 	}
 
 	var resp projectSearchResponse

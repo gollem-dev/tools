@@ -20,11 +20,26 @@ const defaultBaseURL = "https://api.abuseipdb.com/api/v2"
 // ToolSet implements gollem.ToolSet for AbuseIPDB. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// checkInput is the typed argument for the ipdb_check tool. The schema is
+// inferred from this struct by gollem.NewTool, so it is the single source of
+// truth — no separate hand-written parameter map is needed.
+type checkInput struct {
+	Target       string `json:"target" description:"The IP address to check" required:"true"`
+	MaxAgeInDays int    `json:"maxAgeInDays" description:"The maximum age of reports in days (1-365)"`
+}
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var _ = gollem.MustToolSchema[checkInput, map[string]any]()
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -79,55 +94,66 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
 }
 
-// Specs returns the AbuseIPDB tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "ipdb_check",
-			Description: "Check IP address information from AbuseIPDB.",
-			Parameters: map[string]*gollem.Parameter{
-				"target": {
-					Type:        gollem.TypeString,
-					Description: "The IP address to check",
-					Required:    true,
-				},
-				"maxAgeInDays": {
-					Type:        gollem.TypeInteger,
-					Description: "The maximum age of reports in days (1-365)",
-				},
-			},
-		},
-	}, nil
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
-// Run executes the named AbuseIPDB lookup.
+// buildTools constructs the typed AbuseIPDB lookup tool.
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	tool := gollem.MustNewTool("ipdb_check", "Check IP address information from AbuseIPDB.",
+		func(ctx context.Context, in checkInput) (map[string]any, error) {
+			if in.Target == "" {
+				return nil, goerr.New("target is required", goerr.V("args", in))
+			}
+			return t.check(ctx, in.Target, in.MaxAgeInDays)
+		})
+	return []gollem.Tool{tool}
+}
+
+// Specs returns the AbuseIPDB tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named AbuseIPDB lookup by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "ipdb_check":
-		return t.check(ctx, args)
-	default:
+	tool, ok := t.toolByName[name]
+	if !ok {
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by querying a well-known IP
 // address.
 func (t *ToolSet) Ping(ctx context.Context) error {
-	if _, err := t.check(ctx, map[string]any{"target": "8.8.8.8"}); err != nil {
+	if _, err := t.check(ctx, "8.8.8.8", 0); err != nil {
 		return goerr.Wrap(err, "AbuseIPDB ping failed")
 	}
 	return nil
 }
 
-func (t *ToolSet) check(ctx context.Context, args map[string]any) (map[string]any, error) {
-	ipAddress, ok := args["target"].(string)
-	if !ok || ipAddress == "" {
-		return nil, goerr.New("target is required", goerr.V("args", args))
-	}
-
+func (t *ToolSet) check(ctx context.Context, ipAddress string, maxAgeInDays int) (map[string]any, error) {
 	endpoint := t.baseURL + "/check"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -137,12 +163,8 @@ func (t *ToolSet) check(ctx context.Context, args map[string]any) (map[string]an
 	// Build query parameters.
 	q := req.URL.Query()
 	q.Add("ipAddress", ipAddress)
-	if maxAge, ok := args["maxAgeInDays"].(float64); ok {
-		q.Add("maxAgeInDays", fmt.Sprintf("%d", int(maxAge)))
-	} else if args["maxAgeInDays"] != nil {
-		return nil, goerr.New("invalid maxAgeInDays parameter type",
-			goerr.V("type", fmt.Sprintf("%T", args["maxAgeInDays"])),
-			goerr.V("value", args["maxAgeInDays"]))
+	if maxAgeInDays != 0 {
+		q.Add("maxAgeInDays", fmt.Sprintf("%d", maxAgeInDays))
 	}
 	req.URL.RawQuery = q.Encode()
 

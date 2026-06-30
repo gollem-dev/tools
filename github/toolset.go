@@ -111,7 +111,24 @@ type ToolSet struct {
 	// ghinstallation transport, or replaced by tests via export_test.go.
 	client    ghClient
 	transport *ghinstallation.Transport
+
+	// tools holds the typed tool definitions built at construction time.
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[codeSearchInput, map[string]any]()
+	_ = gollem.MustToolSchema[issueSearchInput, map[string]any]()
+	_ = gollem.MustToolSchema[getContentInput, map[string]any]()
+	_ = gollem.MustToolSchema[listCommitsInput, map[string]any]()
+	_ = gollem.MustToolSchema[getBlameInput, map[string]any]()
+	_ = gollem.MustToolSchema[getIssueInput, map[string]any]()
+	_ = gollem.MustToolSchema[getPullRequestInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -177,7 +194,144 @@ func New(appID int64, installationID int64, privateKey string, opts ...Option) (
 		}
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
+}
+
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
+}
+
+// buildTools constructs the seven typed GitHub tools. Each tool's schema is
+// inferred from its typed input struct, eliminating the hand-written parameter
+// map and the args["x"].(T) assertions in Run. MustNewTool is used because the
+// In/Out types are static: a build failure is a programming error (already
+// guarded by the package-level MustToolSchema), not a runtime condition New
+// should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	tools := make([]gollem.Tool, 0, 7)
+
+	codeSearch := gollem.MustNewTool(
+		"github_code_search",
+		"Search for code across any GitHub repository reachable by the App installation. Query syntax examples: 'function login', 'language:go fmt.Println', 'path:src/ extension:js', 'filename:config NOT test'. Scope the search by passing repo_filter or by including 'repo:owner/name', 'org:owner', or 'user:owner' qualifiers in the query.",
+		func(ctx context.Context, in codeSearchInput) (map[string]any, error) {
+			if in.Query == "" {
+				return nil, goerr.New("query is required")
+			}
+			return t.runCodeSearch(ctx, in)
+		},
+	)
+	tools = append(tools, codeSearch)
+
+	issueSearch := gollem.MustNewTool(
+		"github_issue_search",
+		"Search for issues and pull requests across any GitHub repository reachable by the App installation. Query syntax: 'bug in:title', 'label:security state:open', 'author:octocat type:pr'. Scope by passing repo_filter or by including 'repo:owner/name', 'org:owner', or 'user:owner' qualifiers in the query.",
+		func(ctx context.Context, in issueSearchInput) (map[string]any, error) {
+			if in.Query == "" {
+				return nil, goerr.New("query is required")
+			}
+			return t.runIssueSearch(ctx, in)
+		},
+	)
+	tools = append(tools, issueSearch)
+
+	getContent := gollem.MustNewTool(
+		"github_get_content",
+		"Get file content from any GitHub repository reachable by the App installation. Returns the decoded content of the file.",
+		func(ctx context.Context, in getContentInput) (map[string]any, error) {
+			if in.Owner == "" {
+				return nil, goerr.New("owner is required")
+			}
+			if in.Repo == "" {
+				return nil, goerr.New("repo is required")
+			}
+			if in.Path == "" {
+				return nil, goerr.New("path is required")
+			}
+			return t.runGetContent(ctx, in)
+		},
+	)
+	tools = append(tools, getContent)
+
+	listCommits := gollem.MustNewTool(
+		"github_list_commits",
+		"List commits for any repository reachable by the App installation. Supports filtering by file path, author, and branch/SHA. Useful for understanding change history and identifying who changed what and when.",
+		func(ctx context.Context, in listCommitsInput) (map[string]any, error) {
+			if in.Owner == "" {
+				return nil, goerr.New("owner is required")
+			}
+			if in.Repo == "" {
+				return nil, goerr.New("repo is required")
+			}
+			return t.runListCommits(ctx, in)
+		},
+	)
+	tools = append(tools, listCommits)
+
+	getBlame := gollem.MustNewTool(
+		"github_get_blame",
+		"Get git blame information for a file in any repository reachable by the App installation, showing which commit last modified each line. Useful for identifying who wrote specific code and when.",
+		func(ctx context.Context, in getBlameInput) (map[string]any, error) {
+			if in.Owner == "" {
+				return nil, goerr.New("owner is required")
+			}
+			if in.Repo == "" {
+				return nil, goerr.New("repo is required")
+			}
+			if in.Path == "" {
+				return nil, goerr.New("path is required")
+			}
+			return t.runGetBlame(ctx, in)
+		},
+	)
+	tools = append(tools, getBlame)
+
+	getIssue := gollem.MustNewTool(
+		"github_get_issue",
+		"Fetch a single GitHub issue (not a pull request) by number, with full body, labels, and all comments. If the number resolves to a pull request, the call fails — use github_get_pull_request instead.",
+		func(ctx context.Context, in getIssueInput) (map[string]any, error) {
+			if in.Owner == "" {
+				return nil, goerr.New("owner is required")
+			}
+			if in.Repo == "" {
+				return nil, goerr.New("repo is required")
+			}
+			if in.Number < 1 {
+				return nil, goerr.New("number is required and must be a positive integer")
+			}
+			return t.runGetIssue(ctx, in)
+		},
+	)
+	tools = append(tools, getIssue)
+
+	getPR := gollem.MustNewTool(
+		"github_get_pull_request",
+		"Fetch a single GitHub pull request by number, with body, labels, all comments, all reviews, and optionally the file diff. Use include_files=true only when the diff is needed; large PRs can return many files.",
+		func(ctx context.Context, in getPullRequestInput) (map[string]any, error) {
+			if in.Owner == "" {
+				return nil, goerr.New("owner is required")
+			}
+			if in.Repo == "" {
+				return nil, goerr.New("repo is required")
+			}
+			if in.Number < 1 {
+				return nil, goerr.New("number is required and must be a positive integer")
+			}
+			return t.runGetPullRequest(ctx, in)
+		},
+	)
+	tools = append(tools, getPR)
+
+	return tools
 }
 
 // Ping verifies connectivity and credentials by fetching a short-lived
@@ -201,271 +355,20 @@ func (t *ToolSet) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Specs returns the tool specifications for the five GitHub tools.
+// Specs returns the tool specifications derived from the typed tool definitions.
 func (t *ToolSet) Specs(_ context.Context) ([]gollem.ToolSpec, error) {
-	intPtr := func(v int) *int { return &v }
-	float64Ptr := func(v float64) *float64 { return &v }
-
-	return []gollem.ToolSpec{
-		{
-			Name:        "github_code_search",
-			Description: "Search for code across any GitHub repository reachable by the App installation. Query syntax examples: 'function login', 'language:go fmt.Println', 'path:src/ extension:js', 'filename:config NOT test'. Scope the search by passing repo_filter or by including 'repo:owner/name', 'org:owner', or 'user:owner' qualifiers in the query.",
-			Parameters: map[string]*gollem.Parameter{
-				"query": {
-					Type:        gollem.TypeString,
-					Description: "Search query using GitHub code search syntax. Supports operators like AND, OR, NOT",
-					Required:    true,
-					MinLength:   intPtr(1),
-				},
-				"language": {
-					Type:        gollem.TypeString,
-					Description: "Filter by programming language (e.g., 'go', 'python', 'javascript')",
-					Pattern:     "^[a-zA-Z0-9+#-]+$",
-				},
-				"path": {
-					Type:        gollem.TypeString,
-					Description: "Filter by file path pattern (e.g., 'src/', 'test/', '*.go')",
-				},
-				"filename": {
-					Type:        gollem.TypeString,
-					Description: "Filter by filename (e.g., 'config.yaml', 'main.go')",
-					Pattern:     "^[^/]+$",
-				},
-				"repo_filter": {
-					Type:        gollem.TypeString,
-					Description: "Optional repository scope as a comma-separated list of 'owner/name' entries (e.g. 'octocat/Hello-World,octocat/Spoon-Knife'). When omitted, the search is not scoped to any specific repos; use 'repo:', 'org:', or 'user:' qualifiers in the query for finer control.",
-				},
-			},
-		},
-		{
-			Name:        "github_issue_search",
-			Description: "Search for issues and pull requests across any GitHub repository reachable by the App installation. Query syntax: 'bug in:title', 'label:security state:open', 'author:octocat type:pr'. Scope by passing repo_filter or by including 'repo:owner/name', 'org:owner', or 'user:owner' qualifiers in the query.",
-			Parameters: map[string]*gollem.Parameter{
-				"query": {
-					Type:        gollem.TypeString,
-					Description: "Search query using GitHub issue search syntax. Supports operators like in:title, in:body",
-					Required:    true,
-					MinLength:   intPtr(1),
-				},
-				"state": {
-					Type:        gollem.TypeString,
-					Description: "Filter by state: 'open', 'closed', or 'all'",
-					Enum:        []string{"open", "closed", "all"},
-					Default:     "all",
-				},
-				"labels": {
-					Type:        gollem.TypeString,
-					Description: "Filter by labels (comma-separated list, e.g., 'bug,help wanted')",
-					Pattern:     "^[a-zA-Z0-9-_,\\s]+$",
-				},
-				"author": {
-					Type:        gollem.TypeString,
-					Description: "Filter by author username (GitHub username)",
-					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
-					MaxLength:   intPtr(39),
-				},
-				"type": {
-					Type:        gollem.TypeString,
-					Description: "Filter by type: 'issue' for issues only, 'pr' for pull requests only, or 'all' for both",
-					Enum:        []string{"issue", "pr", "all"},
-					Default:     "all",
-				},
-				"repo_filter": {
-					Type:        gollem.TypeString,
-					Description: "Optional repository scope as a comma-separated list of 'owner/name' entries. When omitted, the search is not scoped to any specific repos; use 'repo:', 'org:', or 'user:' qualifiers in the query for finer control.",
-				},
-			},
-		},
-		{
-			Name:        "github_get_content",
-			Description: "Get file content from any GitHub repository reachable by the App installation. Returns the decoded content of the file.",
-			Parameters: map[string]*gollem.Parameter{
-				"owner": {
-					Type:        gollem.TypeString,
-					Description: "Repository owner (organization or username)",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(39),
-				},
-				"repo": {
-					Type:        gollem.TypeString,
-					Description: "Repository name",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9_.-]+$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(100),
-				},
-				"path": {
-					Type:        gollem.TypeString,
-					Description: "File path in the repository (e.g., 'src/main.go', 'README.md')",
-					Required:    true,
-					MinLength:   intPtr(1),
-				},
-				"ref": {
-					Type:        gollem.TypeString,
-					Description: "Git reference: branch name (e.g., 'main'), tag (e.g., 'v1.0.0'), or commit SHA. Defaults to the default branch if not specified.",
-					Pattern:     "^[a-zA-Z0-9/_.-]+$",
-				},
-			},
-		},
-		{
-			Name:        "github_list_commits",
-			Description: "List commits for any repository reachable by the App installation. Supports filtering by file path, author, and branch/SHA. Useful for understanding change history and identifying who changed what and when.",
-			Parameters: map[string]*gollem.Parameter{
-				"owner": {
-					Type:        gollem.TypeString,
-					Description: "Repository owner (organization or username)",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(39),
-				},
-				"repo": {
-					Type:        gollem.TypeString,
-					Description: "Repository name",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9_.-]+$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(100),
-				},
-				"sha": {
-					Type:        gollem.TypeString,
-					Description: "SHA or branch to start listing commits from. Defaults to the default branch.",
-				},
-				"path": {
-					Type:        gollem.TypeString,
-					Description: "Only commits containing this file path will be returned (e.g., 'src/main.go')",
-				},
-				"author": {
-					Type:        gollem.TypeString,
-					Description: "GitHub login or email address to filter commits by author",
-				},
-				"per_page": {
-					Type:        gollem.TypeInteger,
-					Description: "Number of commits per page (default: 30, max: 100)",
-				},
-				"page": {
-					Type:        gollem.TypeInteger,
-					Description: "Page number for pagination (default: 1)",
-				},
-			},
-		},
-		{
-			Name:        "github_get_blame",
-			Description: "Get git blame information for a file in any repository reachable by the App installation, showing which commit last modified each line. Useful for identifying who wrote specific code and when.",
-			Parameters: map[string]*gollem.Parameter{
-				"owner": {
-					Type:        gollem.TypeString,
-					Description: "Repository owner (organization or username)",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(39),
-				},
-				"repo": {
-					Type:        gollem.TypeString,
-					Description: "Repository name",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9_.-]+$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(100),
-				},
-				"path": {
-					Type:        gollem.TypeString,
-					Description: "File path in the repository (e.g., 'src/main.go')",
-					Required:    true,
-					MinLength:   intPtr(1),
-				},
-				"ref": {
-					Type:        gollem.TypeString,
-					Description: "Git reference: branch name, tag, or commit SHA. Defaults to the repository's default branch.",
-					Pattern:     "^[a-zA-Z0-9/_.-]+$",
-				},
-			},
-		},
-		{
-			Name:        "github_get_issue",
-			Description: "Fetch a single GitHub issue (not a pull request) by number, with full body, labels, and all comments. If the number resolves to a pull request, the call fails — use github_get_pull_request instead.",
-			Parameters: map[string]*gollem.Parameter{
-				"owner": {
-					Type:        gollem.TypeString,
-					Description: "Repository owner (organization or username)",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(39),
-				},
-				"repo": {
-					Type:        gollem.TypeString,
-					Description: "Repository name",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9_.-]+$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(100),
-				},
-				"number": {
-					Type:        gollem.TypeInteger,
-					Description: "Issue number (positive integer)",
-					Required:    true,
-					Minimum:     float64Ptr(1),
-				},
-			},
-		},
-		{
-			Name:        "github_get_pull_request",
-			Description: "Fetch a single GitHub pull request by number, with body, labels, all comments, all reviews, and optionally the file diff. Use include_files=true only when the diff is needed; large PRs can return many files.",
-			Parameters: map[string]*gollem.Parameter{
-				"owner": {
-					Type:        gollem.TypeString,
-					Description: "Repository owner (organization or username)",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9][a-zA-Z0-9-]*$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(39),
-				},
-				"repo": {
-					Type:        gollem.TypeString,
-					Description: "Repository name",
-					Required:    true,
-					Pattern:     "^[a-zA-Z0-9_.-]+$",
-					MinLength:   intPtr(1),
-					MaxLength:   intPtr(100),
-				},
-				"number": {
-					Type:        gollem.TypeInteger,
-					Description: "Pull request number (positive integer)",
-					Required:    true,
-					Minimum:     float64Ptr(1),
-				},
-				"include_files": {
-					Type:        gollem.TypeBoolean,
-					Description: "When true, include changed files with status, additions, deletions, and patch. Defaults to false.",
-					Default:     false,
-				},
-			},
-		},
-	}, nil
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
 }
 
-// Run executes the named GitHub tool.
+// Run dispatches to the matching typed tool by name.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case "github_code_search":
-		return t.runCodeSearch(ctx, args)
-	case "github_issue_search":
-		return t.runIssueSearch(ctx, args)
-	case "github_get_content":
-		return t.runGetContent(ctx, args)
-	case "github_list_commits":
-		return t.runListCommits(ctx, args)
-	case "github_get_blame":
-		return t.runGetBlame(ctx, args)
-	case "github_get_issue":
-		return t.runGetIssue(ctx, args)
-	case "github_get_pull_request":
-		return t.runGetPullRequest(ctx, args)
-	default:
+	tool, ok := t.toolByName[name]
+	if !ok {
 		return nil, goerr.New("unknown tool name", goerr.V("name", name))
 	}
+	return tool.Run(ctx, args)
 }

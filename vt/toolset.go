@@ -20,11 +20,27 @@ const defaultBaseURL = "https://www.virustotal.com/api/v3"
 // ToolSet implements gollem.ToolSet for VirusTotal. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// targetInput is the typed argument shared by every VT lookup tool. The schema
+// (and the runtime decode) is inferred from this struct, so there is no
+// separate hand-written parameter map to drift from the Run implementation.
+type targetInput struct {
+	Target string `json:"target" description:"The indicator value to search" required:"true"`
+}
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[targetInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -79,57 +95,98 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
 }
 
-// indicatorTypes maps each tool name to the VirusTotal API path segment.
-var indicatorTypes = map[string]string{
-	"vt_ip":        "ip_addresses",
-	"vt_domain":    "domains",
-	"vt_file_hash": "files",
-	"vt_url":       "urls",
-}
-
-// Specs returns the VirusTotal tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	target := func(desc string) map[string]*gollem.Parameter {
-		return map[string]*gollem.Parameter{
-			"target": {
-				Type:        gollem.TypeString,
-				Description: desc,
-				Required:    true,
-			},
-		}
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
 	}
-	return []gollem.ToolSpec{
-		{Name: "vt_ip", Description: "Search the indicator of IPv4/IPv6 from VirusTotal.", Parameters: target("The IP address to search")},
-		{Name: "vt_domain", Description: "Search the indicator of domain from VirusTotal.", Parameters: target("The domain to search")},
-		{Name: "vt_file_hash", Description: "Search the indicator of file hash from VirusTotal.", Parameters: target("The file hash to search")},
-		{Name: "vt_url", Description: "Search the indicator of URL from VirusTotal.", Parameters: target("The URL to search")},
-	}, nil
+	return byName
 }
 
-// Run executes the named VirusTotal lookup.
+// buildTools constructs the typed VirusTotal lookup tools. Each tool shares
+// targetInput but binds a distinct query function, captured per closure.
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	type def struct {
+		name, desc string
+		queryFn    func(ctx context.Context, target string) (map[string]any, error)
+	}
+	defs := []def{
+		{
+			name: "vt_ip",
+			desc: "Search the indicator of IPv4/IPv6 from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				return t.query(ctx, "ip_addresses", target)
+			},
+		},
+		{
+			name: "vt_domain",
+			desc: "Search the indicator of domain from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				return t.query(ctx, "domains", target)
+			},
+		},
+		{
+			name: "vt_file_hash",
+			desc: "Search the indicator of file hash from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				return t.query(ctx, "files", target)
+			},
+		},
+		{
+			// VirusTotal's /urls/{id} endpoint requires the URL to be encoded as
+			// base64url (RawURLEncoding, no padding) rather than percent-escaped.
+			name: "vt_url",
+			desc: "Search the indicator of URL from VirusTotal.",
+			queryFn: func(ctx context.Context, target string) (map[string]any, error) {
+				id := base64.RawURLEncoding.EncodeToString([]byte(target))
+				return t.queryRaw(ctx, "urls/"+id)
+			},
+		},
+	}
+
+	tools := make([]gollem.Tool, 0, len(defs))
+	for _, d := range defs {
+		queryFn := d.queryFn
+		tool := gollem.MustNewTool(d.name, d.desc,
+			func(ctx context.Context, in targetInput) (map[string]any, error) {
+				if in.Target == "" {
+					return nil, goerr.New("target is required")
+				}
+				return queryFn(ctx, in.Target)
+			})
+		tools = append(tools, tool)
+	}
+	return tools
+}
+
+// Specs returns the VirusTotal tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named VirusTotal lookup by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	indicatorType, ok := indicatorTypes[name]
+	tool, ok := t.toolByName[name]
 	if !ok {
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-
-	indicator, ok := args["target"].(string)
-	if !ok || indicator == "" {
-		return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-	}
-
-	// VirusTotal's /urls/{id} endpoint requires the URL to be encoded as
-	// base64url (RawURLEncoding, no padding) rather than percent-escaped, because
-	// the raw URL contains characters that are not valid path segments.
-	if name == "vt_url" {
-		id := base64.RawURLEncoding.EncodeToString([]byte(indicator))
-		return t.queryRaw(ctx, indicatorType+"/"+id)
-	}
-
-	return t.query(ctx, indicatorType, indicator)
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by querying a well-known IP

@@ -32,12 +32,23 @@ const httpTimeout = 30 * time.Second
 // ToolSet implements gollem.ToolSet for read-only Jira Cloud access. Fields are
 // unexported; configure via Option.
 type ToolSet struct {
-	baseURL  string
-	email    string
-	apiToken string
-	client   *http.Client
-	logger   *slog.Logger
+	baseURL    string
+	email      string
+	apiToken   string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[listProjectsInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchIssuesInput, map[string]any]()
+	_ = gollem.MustToolSchema[getIssuesInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -97,7 +108,21 @@ func New(baseURL, email, apiToken string, opts ...Option) (*ToolSet, error) {
 		opt(t)
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
+}
+
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
 // Tool names exposed by this ToolSet.
@@ -107,27 +132,53 @@ const (
 	toolGetIssues    = "jira_get_issues"
 )
 
-// Specs returns the Jira tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		listProjectsSpec(),
-		searchIssuesSpec(),
-		getIssuesSpec(),
-	}, nil
+// buildTools constructs the typed Jira tools. Each tool has its own input
+// struct so the schema is the single source of truth — no hand-written
+// parameter map to drift from the Run implementation.
+// MustNewTool is used because the In/Out types are static: a build failure is a programming error (already guarded by the package-level MustToolSchema), not a runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	listProjects := gollem.MustNewTool(toolListProjects,
+		"List Jira projects accessible to the authenticated account. "+
+			"Returns id, key, name, project type, and lead for each project, with pagination.",
+		func(ctx context.Context, in listProjectsInput) (map[string]any, error) {
+			return t.listProjects(ctx, in)
+		})
+
+	searchIssues := gollem.MustNewTool(toolSearchIssues,
+		"Search Jira issues using JQL (Jira Query Language). "+
+			"Returns key, summary, status, issue type, assignee, priority, and last-updated time for each match, with pagination. "+
+			"Use jira_get_issues to fetch the full content of matched issues.",
+		func(ctx context.Context, in searchIssuesInput) (map[string]any, error) {
+			return t.searchIssues(ctx, in)
+		})
+
+	getIssues := gollem.MustNewTool(toolGetIssues,
+		"Fetch the full content of one or more Jira issues by key or id (batched in a single request). "+
+			"Each issue's description (and optionally its comments) is returned as Markdown. "+
+			"Keys that cannot be resolved are reported in not_found.",
+		func(ctx context.Context, in getIssuesInput) (map[string]any, error) {
+			return t.getIssues(ctx, in)
+		})
+
+	return []gollem.Tool{listProjects, searchIssues, getIssues}
 }
 
-// Run dispatches to the named Jira tool.
+// Specs returns the Jira tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named Jira tool by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	switch name {
-	case toolListProjects:
-		return t.listProjects(ctx, args)
-	case toolSearchIssues:
-		return t.searchIssues(ctx, args)
-	case toolGetIssues:
-		return t.getIssues(ctx, args)
-	default:
+	tool, ok := t.toolByName[name]
+	if !ok {
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by fetching the current user.

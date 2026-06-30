@@ -3,10 +3,10 @@ module github.com/gollem-dev/tools/webfetch
 go 1.26.4
 
 require (
-	github.com/gollem-dev/gollem v0.26.0
+	github.com/gollem-dev/gollem v0.26.2-0.20260628032704-8a4e4f2abafd
 	github.com/m-mizutani/goerr/v2 v2.0.1
 	github.com/m-mizutani/gt v0.2.1
-	golang.org/x/net v0.53.0
+	golang.org/x/net v0.55.0
 )
 
 require (
@@ -29,10 +29,10 @@ require (
 	go.opentelemetry.io/otel v1.43.0 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/api v0.275.0 // indirect
 	google.golang.org/genai v1.53.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d // indirect

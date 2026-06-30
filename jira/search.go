@@ -7,41 +7,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gollem-dev/gollem"
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func searchIssuesSpec() gollem.ToolSpec {
-	return gollem.ToolSpec{
-		Name: toolSearchIssues,
-		Description: "Search Jira issues using JQL (Jira Query Language). " +
-			"Returns key, summary, status, issue type, assignee, priority, and last-updated time for each match, with pagination. " +
-			"Use jira_get_issues to fetch the full content of matched issues.",
-		Parameters: map[string]*gollem.Parameter{
-			"jql": {
-				Type: gollem.TypeString,
-				Description: "JQL query string, e.g. 'status = \"In Progress\" ORDER BY updated DESC'. " +
-					"Omit to match all issues (subject to the project filter below).",
-				Required: false,
-			},
-			"project": {
-				Type: gollem.TypeString,
-				Description: "Restrict the search to this project key or id. Combined with jql via AND. " +
-					"Convenience for the common 'project = X' clause; you may instead put it directly in jql.",
-				Required: false,
-			},
-			"max_results": {
-				Type:        gollem.TypeInteger,
-				Description: "Number of issues to return (1-100, default 50).",
-				Required:    false,
-			},
-			"next_page_token": {
-				Type:        gollem.TypeString,
-				Description: "Pagination token returned as next_page_token by a previous call. Omit to start from the first page.",
-				Required:    false,
-			},
-		},
-	}
+// searchIssuesInput is the typed argument for the jira_search_issues tool.
+// The schema is inferred from the struct tags, so there is no separate
+// hand-written parameter map to drift from the Run implementation.
+type searchIssuesInput struct {
+	JQL           string `json:"jql" description:"JQL query string, e.g. 'status = \"In Progress\" ORDER BY updated DESC'. Omit to match all issues (subject to the project filter below)."`
+	Project       string `json:"project" description:"Restrict the search to this project key or id. Combined with jql via AND. Convenience for the common 'project = X' clause; you may instead put it directly in jql."`
+	MaxResults    int    `json:"max_results" description:"Number of issues to return (1-100, default 50)."`
+	NextPageToken string `json:"next_page_token" description:"Pagination token returned as next_page_token by a previous call. Omit to start from the first page."`
 }
 
 // issueSearchResponse mirrors the relevant fields of GET /rest/api/3/search/jql.
@@ -72,21 +48,21 @@ type searchIssue struct {
 	} `json:"fields"`
 }
 
-func (t *ToolSet) searchIssues(ctx context.Context, args map[string]any) (map[string]any, error) {
-	jql, _ := args["jql"].(string)
-	if project, ok := args["project"].(string); ok && project != "" {
-		jql = combineJQL(project, jql)
+func (t *ToolSet) searchIssues(ctx context.Context, in searchIssuesInput) (map[string]any, error) {
+	jql := in.JQL
+	if in.Project != "" {
+		jql = combineJQL(in.Project, jql)
 	}
 
-	maxResults := clampInt(args["max_results"], 50, 1, 100)
+	maxResults := clampInt(in.MaxResults, 50, 1, 100)
 
 	q := url.Values{}
 	q.Set("jql", jql)
 	q.Set("maxResults", strconv.Itoa(maxResults))
 	// Request only the fields surfaced in the result to keep payloads small.
 	q.Set("fields", "summary,status,issuetype,priority,assignee,updated")
-	if v, ok := args["next_page_token"].(string); ok && v != "" {
-		q.Set("nextPageToken", v)
+	if in.NextPageToken != "" {
+		q.Set("nextPageToken", in.NextPageToken)
 	}
 
 	var resp issueSearchResponse

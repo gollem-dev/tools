@@ -7,36 +7,14 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/gollem-dev/gollem"
 	"github.com/m-mizutani/goerr/v2"
 )
 
-func queryDatabaseSpec() gollem.ToolSpec {
-	return gollem.ToolSpec{
-		Name: toolQueryDatabase,
-		Description: "Query the rows (pages) of a Notion database shared with the integration. " +
-			"Uses the legacy database query API (Notion-Version 2022-06-28); databases created under the " +
-			"2025-09-03+ data-source model may not be addressable by this tool. " +
-			"Returns each row's id, title, URL, last edited timestamp, and a flattened map of its " +
-			"properties (title, text, number, select, multi_select, date, checkbox, url, email, phone, etc.).",
-		Parameters: map[string]*gollem.Parameter{
-			"database_id": {
-				Type:        gollem.TypeString,
-				Description: "The Notion database ID (with or without dashes).",
-				Required:    true,
-			},
-			"page_size": {
-				Type:        gollem.TypeInteger,
-				Description: "Number of rows to return (1-100, default 20).",
-				Required:    false,
-			},
-			"start_cursor": {
-				Type:        gollem.TypeString,
-				Description: "Pagination cursor returned as next_cursor by a previous call. Omit to start from the beginning.",
-				Required:    false,
-			},
-		},
-	}
+// queryDatabaseInput is the typed argument for notion_query_database.
+type queryDatabaseInput struct {
+	DatabaseID  string `json:"database_id" description:"The Notion database ID (with or without dashes)." required:"true"`
+	PageSize    int    `json:"page_size" description:"Number of rows to return (1-100, default 20)." min:"1" max:"100"`
+	StartCursor string `json:"start_cursor" description:"Pagination cursor returned as next_cursor by a previous call. Omit to start from the beginning."`
 }
 
 // databaseQueryResponse mirrors the relevant fields of POST /v1/databases/{id}/query.
@@ -46,26 +24,32 @@ type databaseQueryResponse struct {
 	NextCursor string         `json:"next_cursor"`
 }
 
-func (t *ToolSet) queryDatabase(ctx context.Context, args map[string]any) (map[string]any, error) {
-	databaseID, _ := args["database_id"].(string)
-	if databaseID == "" {
+func (t *ToolSet) runQueryDatabase(ctx context.Context, in queryDatabaseInput) (map[string]any, error) {
+	if in.DatabaseID == "" {
 		return nil, goerr.New("database_id is required")
 	}
 
-	body := map[string]any{
-		"page_size": clampPageSize(args["page_size"]),
+	pageSize := in.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	} else if pageSize > 100 {
+		pageSize = 100
 	}
-	if v, ok := args["start_cursor"].(string); ok && v != "" {
-		body["start_cursor"] = v
+
+	body := map[string]any{
+		"page_size": pageSize,
+	}
+	if in.StartCursor != "" {
+		body["start_cursor"] = in.StartCursor
 	}
 
 	// PathEscape: database_id arrives from LLM tool args; guard against characters
 	// that would break the URL or escape the /v1/databases/ scope.
-	path := "/v1/databases/" + url.PathEscape(databaseID) + "/query"
+	path := "/v1/databases/" + url.PathEscape(in.DatabaseID) + "/query"
 
 	var resp databaseQueryResponse
 	if err := t.doJSON(ctx, http.MethodPost, path, apiVersion, body, &resp); err != nil {
-		return nil, goerr.Wrap(err, "failed to query notion database", goerr.V("database_id", databaseID))
+		return nil, goerr.Wrap(err, "failed to query notion database", goerr.V("database_id", in.DatabaseID))
 	}
 
 	items := make([]map[string]any, 0, len(resp.Results))

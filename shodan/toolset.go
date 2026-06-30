@@ -20,11 +20,38 @@ const defaultBaseURL = "https://api.shodan.io"
 // ToolSet implements gollem.ToolSet for Shodan. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// hostInput is the typed argument for shodan_host.
+type hostInput struct {
+	Target string `json:"target" description:"The IP address to search" required:"true"`
+}
+
+// domainInput is the typed argument for shodan_domain.
+type domainInput struct {
+	Target string `json:"target" description:"The domain to search" required:"true"`
+}
+
+// searchInput is the typed argument for shodan_search.
+type searchInput struct {
+	Query string `json:"query" description:"The search query to use" required:"true"`
+	Limit int    `json:"limit" description:"Maximum number of results to return (default: 100)"`
+}
+
+// Startup assertions: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var (
+	_ = gollem.MustToolSchema[hostInput, map[string]any]()
+	_ = gollem.MustToolSchema[domainInput, map[string]any]()
+	_ = gollem.MustToolSchema[searchInput, map[string]any]()
+)
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -79,97 +106,72 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
 }
 
-// Specs returns the Shodan tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	return []gollem.ToolSpec{
-		{
-			Name:        "shodan_host",
-			Description: "Search the host information from Shodan.",
-			Parameters: map[string]*gollem.Parameter{
-				"target": {
-					Type:        gollem.TypeString,
-					Description: "The IP address to search",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "shodan_domain",
-			Description: "Search the domain information from Shodan.",
-			Parameters: map[string]*gollem.Parameter{
-				"target": {
-					Type:        gollem.TypeString,
-					Description: "The domain to search",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "shodan_search",
-			Description: "Search the internet using Shodan search query.",
-			Parameters: map[string]*gollem.Parameter{
-				"query": {
-					Type:        gollem.TypeString,
-					Description: "The search query to use",
-					Required:    true,
-				},
-				"limit": {
-					Type:        gollem.TypeInteger,
-					Description: "Maximum number of results to return (default: 100)",
-					Required:    false,
-				},
-			},
-		},
-	}, nil
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
+	}
+	return byName
 }
 
-// Run executes the named Shodan lookup.
-func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	var endpoint string
-	params := url.Values{}
-	params.Set("key", t.apiKey)
-
-	switch name {
-	case "shodan_host":
-		target, ok := args["target"].(string)
-		if !ok || target == "" {
-			return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-		}
-		endpoint = fmt.Sprintf("%s/shodan/host/%s", t.baseURL, url.PathEscape(target))
-
-	case "shodan_domain":
-		target, ok := args["target"].(string)
-		if !ok || target == "" {
-			return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-		}
-		endpoint = fmt.Sprintf("%s/dns/domain/%s", t.baseURL, url.PathEscape(target))
-
-	case "shodan_search":
-		query, ok := args["query"].(string)
-		if !ok || query == "" {
-			return nil, goerr.New("query is required", goerr.V("name", name), goerr.V("args", args))
-		}
-		endpoint = fmt.Sprintf("%s/shodan/host/search", t.baseURL)
-		params.Set("query", query)
-
-		// limit is optional; LLMs may pass it as float64 (JSON numbers).
-		if raw, exists := args["limit"]; exists && raw != nil {
-			limit, ok := raw.(float64)
-			if !ok {
-				return nil, goerr.New("invalid limit parameter type",
-					goerr.V("type", fmt.Sprintf("%T", raw)),
-					goerr.V("value", raw))
+// buildTools constructs the typed Shodan lookup tools. Each tool captures the
+// ToolSet receiver so the handlers can reach the client and API key.
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	hostTool := gollem.MustNewTool("shodan_host", "Search the host information from Shodan.",
+		func(ctx context.Context, in hostInput) (map[string]any, error) {
+			if in.Target == "" {
+				return nil, goerr.New("target is required", goerr.V("name", "shodan_host"))
 			}
-			params.Set("limit", fmt.Sprintf("%d", int(limit)))
-		}
+			params := url.Values{}
+			params.Set("key", t.apiKey)
+			endpoint := fmt.Sprintf("%s/shodan/host/%s", t.baseURL, url.PathEscape(in.Target))
+			return t.doGet(ctx, endpoint, params)
+		})
 
-	default:
-		return nil, goerr.New("invalid function name", goerr.V("name", name))
-	}
+	domainTool := gollem.MustNewTool("shodan_domain", "Search the domain information from Shodan.",
+		func(ctx context.Context, in domainInput) (map[string]any, error) {
+			if in.Target == "" {
+				return nil, goerr.New("target is required", goerr.V("name", "shodan_domain"))
+			}
+			params := url.Values{}
+			params.Set("key", t.apiKey)
+			endpoint := fmt.Sprintf("%s/dns/domain/%s", t.baseURL, url.PathEscape(in.Target))
+			return t.doGet(ctx, endpoint, params)
+		})
 
+	searchTool := gollem.MustNewTool("shodan_search", "Search the internet using Shodan search query.",
+		func(ctx context.Context, in searchInput) (map[string]any, error) {
+			if in.Query == "" {
+				return nil, goerr.New("query is required", goerr.V("name", "shodan_search"))
+			}
+			params := url.Values{}
+			params.Set("key", t.apiKey)
+			params.Set("query", in.Query)
+			if in.Limit != 0 {
+				params.Set("limit", fmt.Sprintf("%d", in.Limit))
+			}
+			endpoint := fmt.Sprintf("%s/shodan/host/search", t.baseURL)
+			return t.doGet(ctx, endpoint, params)
+		})
+
+	return []gollem.Tool{hostTool, domainTool, searchTool}
+}
+
+// doGet executes a GET request to endpoint with the given query params and
+// returns the decoded JSON response body.
+func (t *ToolSet) doGet(ctx context.Context, endpoint string, params url.Values) (map[string]any, error) {
 	fullURL := endpoint + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
@@ -206,6 +208,24 @@ func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (ma
 	}
 
 	return data, nil
+}
+
+// Specs returns the Shodan tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named Shodan lookup by delegating to the matching typed tool.
+func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	tool, ok := t.toolByName[name]
+	if !ok {
+		return nil, goerr.New("invalid function name", goerr.V("name", name))
+	}
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by querying the well-known Google

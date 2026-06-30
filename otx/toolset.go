@@ -19,11 +19,25 @@ const defaultBaseURL = "https://otx.alienvault.com/api/v1"
 // ToolSet implements gollem.ToolSet for AlienVault OTX. Fields are unexported;
 // configure via Option.
 type ToolSet struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	logger     *slog.Logger
+	tools      []gollem.Tool
+	toolByName map[string]gollem.Tool
 }
+
+// targetInput is the typed argument shared by every OTX lookup tool. The schema
+// (and the runtime decode) is inferred from this struct, so there is no separate
+// hand-written parameter map to drift from the Run implementation.
+type targetInput struct {
+	Target string `json:"target" description:"The indicator value to search (IPv4/IPv6/domain/hostname/file hash, depending on the tool)" required:"true"`
+}
+
+// Startup assertion: a malformed input/output type (a broken struct tag, a
+// non-object kind) is a programming error that should surface at init rather
+// than on the first LLM call. See gollem docs "Validating Tool Types".
+var _ = gollem.MustToolSchema[targetInput, map[string]any]()
 
 var _ gollem.ToolSet = (*ToolSet)(nil)
 
@@ -77,51 +91,70 @@ func New(apiKey string, opts ...Option) (*ToolSet, error) {
 		return nil, goerr.Wrap(err, "invalid base URL", goerr.V("base_url", t.baseURL))
 	}
 
+	t.tools = t.buildTools()
+	t.toolByName = indexTools(t.tools)
+
 	return t, nil
 }
 
-// indicatorTypes maps each tool name to the OTX indicator type path segment.
-var indicatorTypes = map[string]string{
-	"otx_ipv4":      "IPv4",
-	"otx_ipv6":      "IPv6",
-	"otx_domain":    "domain",
-	"otx_hostname":  "hostname",
-	"otx_file_hash": "file",
-}
-
-// Specs returns the OTX tool specifications.
-func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
-	target := func(desc string) map[string]*gollem.Parameter {
-		return map[string]*gollem.Parameter{
-			"target": {
-				Type:        gollem.TypeString,
-				Description: desc,
-				Required:    true,
-			},
-		}
+// indexTools builds a name->tool lookup so Run dispatches in O(1) instead of
+// scanning (and re-deriving Spec()) on every call. The map is built once at
+// construction and never mutated, so it is safe for concurrent Run calls.
+func indexTools(tools []gollem.Tool) map[string]gollem.Tool {
+	byName := make(map[string]gollem.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Spec().Name] = tool
 	}
-	return []gollem.ToolSpec{
-		{Name: "otx_ipv4", Description: "Search the indicator of IPv4 from OTX.", Parameters: target("The IPv4 address to search")},
-		{Name: "otx_domain", Description: "Search the indicator of domain from OTX.", Parameters: target("The domain to search")},
-		{Name: "otx_ipv6", Description: "Search the indicator of IPv6 from OTX.", Parameters: target("The IPv6 address to search")},
-		{Name: "otx_hostname", Description: "Search the indicator of hostname from OTX.", Parameters: target("The hostname to search")},
-		{Name: "otx_file_hash", Description: "Search the indicator of file hash from OTX.", Parameters: target("The file hash to search")},
-	}, nil
+	return byName
 }
 
-// Run executes the named OTX lookup.
+// buildTools constructs the typed OTX lookup tools. Each tool shares targetInput
+// but binds a distinct OTX indicator path segment, captured per closure.
+// MustNewTool is used because the In/Out types are static: a build failure is a
+// programming error (already guarded by the package-level MustToolSchema), not a
+// runtime condition New should report.
+func (t *ToolSet) buildTools() []gollem.Tool {
+	defs := []struct {
+		name, desc, indicator string
+	}{
+		{"otx_ipv4", "Search the indicator of IPv4 from OTX.", "IPv4"},
+		{"otx_domain", "Search the indicator of domain from OTX.", "domain"},
+		{"otx_ipv6", "Search the indicator of IPv6 from OTX.", "IPv6"},
+		{"otx_hostname", "Search the indicator of hostname from OTX.", "hostname"},
+		{"otx_file_hash", "Search the indicator of file hash from OTX.", "file"},
+	}
+
+	tools := make([]gollem.Tool, 0, len(defs))
+	for _, d := range defs {
+		indicator := d.indicator
+		tool := gollem.MustNewTool(d.name, d.desc,
+			func(ctx context.Context, in targetInput) (map[string]any, error) {
+				if in.Target == "" {
+					return nil, goerr.New("target is required", goerr.V("indicator", indicator))
+				}
+				return t.query(ctx, indicator, in.Target)
+			})
+		tools = append(tools, tool)
+	}
+	return tools
+}
+
+// Specs returns the OTX tool specifications, derived from the typed tools.
+func (t *ToolSet) Specs(ctx context.Context) ([]gollem.ToolSpec, error) {
+	specs := make([]gollem.ToolSpec, len(t.tools))
+	for i, tool := range t.tools {
+		specs[i] = tool.Spec()
+	}
+	return specs, nil
+}
+
+// Run executes the named OTX lookup by delegating to the matching typed tool.
 func (t *ToolSet) Run(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	indicatorType, ok := indicatorTypes[name]
+	tool, ok := t.toolByName[name]
 	if !ok {
 		return nil, goerr.New("invalid function name", goerr.V("name", name))
 	}
-
-	indicator, ok := args["target"].(string)
-	if !ok || indicator == "" {
-		return nil, goerr.New("target is required", goerr.V("name", name), goerr.V("args", args))
-	}
-
-	return t.query(ctx, indicatorType, indicator)
+	return tool.Run(ctx, args)
 }
 
 // Ping verifies connectivity and credentials by querying a well-known IPv4
